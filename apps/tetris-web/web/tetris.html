@@ -1,0 +1,864 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClawdCity Tetris</title>
+  <style>
+    :root {
+      --bg1: #fff7d6;
+      --bg2: #d8f7ff;
+      --ink: #2c3550;
+      --card: #ffffff;
+      --line: #c7d9f2;
+      --accent: #ff8b5f;
+      --accent2: #58a4ff;
+      --good: #38c172;
+      --warn: #ff5a7b;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Baloo 2", "Noto Sans SC", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% 8%, #ffffff88 0, #ffffff00 35%),
+        radial-gradient(circle at 88% 18%, #ffd7f588 0, #ffffff00 35%),
+        linear-gradient(140deg, var(--bg1), var(--bg2));
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    .app {
+      width: min(960px, 100%);
+      display: grid;
+      gap: 14px;
+      grid-template-columns: 340px 1fr;
+    }
+
+    .panel {
+      background: var(--card);
+      border: 3px solid var(--line);
+      border-radius: 20px;
+      box-shadow: 0 10px 24px #89a7cf33;
+      padding: 14px;
+    }
+
+    .title {
+      font-size: 30px;
+      margin: 2px 0 8px;
+      letter-spacing: .02em;
+      color: #2b4279;
+    }
+
+    .sub {
+      font-size: 13px;
+      opacity: .8;
+      margin-bottom: 10px;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      margin: 10px 0;
+    }
+
+    .stat {
+      border: 2px dashed #d7e5ff;
+      border-radius: 12px;
+      padding: 8px;
+      background: #f9fcff;
+      min-height: 58px;
+    }
+
+    .stat b {
+      display: block;
+      font-size: 12px;
+      opacity: .7;
+      margin-bottom: 3px;
+    }
+
+    .stat span {
+      font-size: 24px;
+      color: #345ca8;
+      font-weight: 700;
+    }
+
+    .btns {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(2, 1fr);
+    }
+
+    button {
+      border: none;
+      padding: 10px 12px;
+      border-radius: 12px;
+      font: inherit;
+      cursor: pointer;
+      color: white;
+      font-weight: 700;
+      box-shadow: 0 6px 12px #6987c333;
+    }
+
+    button.primary { background: linear-gradient(180deg, #ff9d73, var(--accent)); }
+    button.secondary { background: linear-gradient(180deg, #78b8ff, var(--accent2)); }
+    button.warn { background: linear-gradient(180deg, #ff7b95, var(--warn)); }
+
+    .mini-title {
+      margin: 12px 0 6px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .next-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 2px dashed #d6e4fb;
+      border-radius: 12px;
+      background: #f8fbff;
+      padding: 8px;
+      min-height: 110px;
+    }
+
+    canvas {
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      border-radius: 14px;
+    }
+
+    #board {
+      width: 100%;
+      max-width: 430px;
+      background: #14213f;
+      border: 5px solid #8bc1ff;
+      box-shadow: inset 0 0 0 4px #ffffff22;
+    }
+
+    #next {
+      background: #17305f;
+      border: 3px solid #8bc1ff;
+    }
+
+    .right {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 620px;
+    }
+
+    .hint {
+      margin-top: 10px;
+      font-size: 12px;
+      line-height: 1.5;
+      background: #f3f9ff;
+      border: 2px dashed #d6e7ff;
+      border-radius: 10px;
+      padding: 8px;
+    }
+
+    .status {
+      margin-top: 10px;
+      background: #effaf3;
+      border: 2px solid #c9f0d8;
+      color: #236a42;
+      border-radius: 10px;
+      font-size: 13px;
+      padding: 7px 8px;
+      min-height: 38px;
+    }
+
+    .touch {
+      margin-top: 10px;
+      display: none;
+      gap: 8px;
+      grid-template-columns: repeat(3, 1fr);
+    }
+
+    .touch button {
+      background: linear-gradient(180deg, #7cc2ff, #5b9cff);
+      padding: 11px;
+    }
+
+    @media (max-width: 920px) {
+      .app { grid-template-columns: 1fr; }
+      .right { min-height: auto; }
+      #board { max-width: 100%; }
+      .touch { display: grid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <section class="panel">
+      <h1 class="title" id="titleText">ClawdCity Tetris</h1>
+      <div class="sub" id="subText">Cartoon test edition · Keyboard and touch controls supported</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <label for="langSelect" id="langLabel" style="font-size:12px;opacity:.75;">Language</label>
+        <select id="langSelect" style="max-width:160px;">
+          <option value="en">English</option>
+          <option value="zh">中文</option>
+        </select>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><b id="labelScore">Score</b><span id="score">0</span></div>
+        <div class="stat"><b id="labelLines">Lines</b><span id="lines">0</span></div>
+        <div class="stat"><b id="labelLevel">Level</b><span id="level">1</span></div>
+        <div class="stat"><b id="labelBest">Best</b><span id="best">0</span></div>
+      </div>
+
+      <div class="btns">
+        <button class="primary" id="startBtn">Start / Resume</button>
+        <button class="secondary" id="pauseBtn">Pause</button>
+        <button class="warn" id="restartBtn" style="grid-column: 1 / -1;">Restart</button>
+      </div>
+
+      <div class="mini-title" id="nextTitle">Next Piece</div>
+      <div class="next-wrap"><canvas id="next" width="120" height="120"></canvas></div>
+
+      <div class="status" id="status">Ready. Click Start / Resume.</div>
+
+      <div class="hint" id="hintText">
+        Keyboard: ← → move, ↑ rotate, ↓ soft drop, Space hard drop, P pause.
+      </div>
+
+      <div class="mini-title" id="roomTitle">Realtime Room</div>
+      <div class="hint" style="margin-top:6px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <input id="playerIdInput" placeholder="player id" value="player_a" />
+          <input id="pingInput" type="number" min="0" value="40" />
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px;">
+          <button class="secondary" id="registerBtn">Register</button>
+          <button class="secondary" id="readyBtn">Ready</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr;gap:6px;margin-top:6px;">
+          <button class="warn" id="agentToggleBtn">Switch To Agent</button>
+        </div>
+        <div id="roomMeta" style="font-size:12px;margin-top:6px;line-height:1.45;"></div>
+      </div>
+      <pre id="roomLog" style="min-height:90px;margin-top:8px;"></pre>
+
+      <div class="touch">
+        <button id="leftBtn">Left</button>
+        <button id="rotateBtn">Rotate</button>
+        <button id="rightBtn">Right</button>
+        <button id="downBtn">Down</button>
+        <button id="dropBtn">Hard Drop</button>
+        <button id="pauseBtn2">Pause/Resume</button>
+      </div>
+    </section>
+
+    <section class="panel right">
+      <canvas id="board" width="300" height="600"></canvas>
+    </section>
+  </div>
+
+  <script>
+    const COLS = 10;
+    const ROWS = 20;
+    const BLOCK = 30;
+
+    const COLORS = {
+      I: '#68deff', O: '#ffd45f', T: '#bf8cff', S: '#66df96',
+      Z: '#ff7f9a', J: '#6e9dff', L: '#ffb36b'
+    };
+
+    const SHAPES = {
+      I: [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+      O: [[1,1],[1,1]],
+      T: [[0,1,0],[1,1,1],[0,0,0]],
+      S: [[0,1,1],[1,1,0],[0,0,0]],
+      Z: [[1,1,0],[0,1,1],[0,0,0]],
+      J: [[1,0,0],[1,1,1],[0,0,0]],
+      L: [[0,0,1],[1,1,1],[0,0,0]]
+    };
+
+    const KEYS = Object.keys(SHAPES);
+
+    const boardCanvas = document.getElementById('board');
+    const ctx = boardCanvas.getContext('2d');
+    const nextCanvas = document.getElementById('next');
+    const nctx = nextCanvas.getContext('2d');
+
+    const scoreEl = document.getElementById('score');
+    const linesEl = document.getElementById('lines');
+    const levelEl = document.getElementById('level');
+    const bestEl = document.getElementById('best');
+    const statusEl = document.getElementById('status');
+    const langSelect = document.getElementById('langSelect');
+
+    const I18N = {
+      en: {
+        title: 'ClawdCity Tetris',
+        sub: 'Cartoon test edition · Keyboard and touch controls supported',
+        lang: 'Language',
+        score: 'Score',
+        lines: 'Lines',
+        level: 'Level',
+        best: 'Best',
+        start: 'Start / Resume',
+        pause: 'Pause',
+        restart: 'Restart',
+        next: 'Next Piece',
+        hint: 'Keyboard: ← → move, ↑ rotate, ↓ soft drop, Space hard drop, P pause.',
+        left: 'Left',
+        rotate: 'Rotate',
+        right: 'Right',
+        down: 'Down',
+        drop: 'Hard Drop',
+        pause2: 'Pause/Resume',
+        roomTitle: 'Realtime Room',
+        register: 'Register',
+        ready: 'Ready',
+        switchAgent: 'Switch To Agent',
+        switchHuman: 'Return To Human',
+        roomMetaIdle: 'No room yet. Register then click Ready.',
+        roomMetaFmt: 'Player: {player} | Room: {room} | Host: {host} | Control: {mode}',
+        statusReady: 'Ready. Click Start / Resume.',
+        statusRunning: 'Game running. Have fun!',
+        statusResumed: 'Resumed.',
+        statusPaused: 'Paused.',
+        statusGameOver: 'Game over. Click Restart to play again.',
+        statusRestarted: 'New game is ready. Click Start / Resume.'
+      },
+      zh: {
+        title: 'ClawdCity 俄罗斯方块',
+        sub: '卡通测试版 · 支持键盘和触屏控制',
+        lang: '语言',
+        score: '分数',
+        lines: '消行',
+        level: '等级',
+        best: '最高分',
+        start: '开始 / 继续',
+        pause: '暂停',
+        restart: '重新开始',
+        next: '下一个方块',
+        hint: '键盘：← → 移动，↑ 旋转，↓ 加速，空格硬降，P 暂停。',
+        left: '左',
+        rotate: '转',
+        right: '右',
+        down: '下',
+        drop: '落到底',
+        pause2: '暂停/继续',
+        roomTitle: '实时房间',
+        register: '注册',
+        ready: '准备',
+        switchAgent: '切换为Agent接管',
+        switchHuman: '切回人工操作',
+        roomMetaIdle: '尚未分房。先注册再点击准备。',
+        roomMetaFmt: '玩家: {player} | 房间: {room} | Host: {host} | 控制: {mode}',
+        statusReady: '准备好后点击“开始 / 继续”。',
+        statusRunning: '游戏进行中，加油！',
+        statusResumed: '已继续。',
+        statusPaused: '已暂停。',
+        statusGameOver: '游戏结束，点击“重新开始”再来一局。',
+        statusRestarted: '新的一局已准备好，点击“开始 / 继续”。'
+      }
+    };
+
+    let currentLang = localStorage.getItem('clawdcity_tetris_lang') || 'en';
+    if (!I18N[currentLang]) currentLang = 'en';
+
+    const startBtn = document.getElementById('startBtn');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const restartBtn = document.getElementById('restartBtn');
+
+    const leftBtn = document.getElementById('leftBtn');
+    const rightBtn = document.getElementById('rightBtn');
+    const downBtn = document.getElementById('downBtn');
+    const dropBtn = document.getElementById('dropBtn');
+    const rotateBtn = document.getElementById('rotateBtn');
+    const pauseBtn2 = document.getElementById('pauseBtn2');
+    const playerIdInput = document.getElementById('playerIdInput');
+    const pingInput = document.getElementById('pingInput');
+    const registerBtn = document.getElementById('registerBtn');
+    const readyBtn = document.getElementById('readyBtn');
+    const roomMetaEl = document.getElementById('roomMeta');
+    const roomLogEl = document.getElementById('roomLog');
+    const agentToggleBtn = document.getElementById('agentToggleBtn');
+
+    let board = [];
+    let current = null;
+    let next = null;
+    let score = 0;
+    let lines = 0;
+    let level = 1;
+    let dropInterval = 800;
+    let dropCounter = 0;
+    let lastTime = 0;
+    let running = false;
+    let paused = false;
+    let gameOver = false;
+    let best = Number(localStorage.getItem('clawdcity_tetris_best') || 0);
+    let roomId = '';
+    let hostId = '';
+    let controlMode = 'human';
+    let roomStream = null;
+
+    bestEl.textContent = best;
+
+    function t(key) {
+      const dict = I18N[currentLang] || I18N.en;
+      return dict[key] || I18N.en[key] || key;
+    }
+
+    function applyI18n() {
+      document.documentElement.lang = currentLang === 'zh' ? 'zh-CN' : 'en';
+      document.getElementById('titleText').textContent = t('title');
+      document.getElementById('subText').textContent = t('sub');
+      document.getElementById('langLabel').textContent = t('lang');
+      document.getElementById('labelScore').textContent = t('score');
+      document.getElementById('labelLines').textContent = t('lines');
+      document.getElementById('labelLevel').textContent = t('level');
+      document.getElementById('labelBest').textContent = t('best');
+      document.getElementById('nextTitle').textContent = t('next');
+      document.getElementById('hintText').textContent = t('hint');
+      startBtn.textContent = t('start');
+      pauseBtn.textContent = t('pause');
+      restartBtn.textContent = t('restart');
+      leftBtn.textContent = t('left');
+      rotateBtn.textContent = t('rotate');
+      rightBtn.textContent = t('right');
+      downBtn.textContent = t('down');
+      dropBtn.textContent = t('drop');
+      pauseBtn2.textContent = t('pause2');
+      document.getElementById('roomTitle').textContent = t('roomTitle');
+      registerBtn.textContent = t('register');
+      readyBtn.textContent = t('ready');
+      agentToggleBtn.textContent = controlMode === 'agent' ? t('switchHuman') : t('switchAgent');
+      if (!roomId) roomMetaEl.textContent = t('roomMetaIdle');
+    }
+
+    function createBoard() {
+      board = Array.from({length: ROWS}, () => Array(COLS).fill(''));
+    }
+
+    function cloneMatrix(m) {
+      return m.map(r => r.slice());
+    }
+
+    function randomPiece() {
+      const type = KEYS[Math.floor(Math.random() * KEYS.length)];
+      return {
+        type,
+        matrix: cloneMatrix(SHAPES[type]),
+        x: Math.floor((COLS - SHAPES[type][0].length) / 2),
+        y: -1
+      };
+    }
+
+    function collide(p, b = board) {
+      for (let y = 0; y < p.matrix.length; y++) {
+        for (let x = 0; x < p.matrix[y].length; x++) {
+          if (!p.matrix[y][x]) continue;
+          const nx = p.x + x;
+          const ny = p.y + y;
+          if (nx < 0 || nx >= COLS || ny >= ROWS) return true;
+          if (ny >= 0 && b[ny][nx]) return true;
+        }
+      }
+      return false;
+    }
+
+    function mergePiece() {
+      for (let y = 0; y < current.matrix.length; y++) {
+        for (let x = 0; x < current.matrix[y].length; x++) {
+          if (!current.matrix[y][x]) continue;
+          const by = current.y + y;
+          const bx = current.x + x;
+          if (by >= 0) board[by][bx] = current.type;
+        }
+      }
+    }
+
+    function clearLines() {
+      let cleared = 0;
+      outer:
+      for (let y = ROWS - 1; y >= 0; y--) {
+        for (let x = 0; x < COLS; x++) {
+          if (!board[y][x]) continue outer;
+        }
+        board.splice(y, 1);
+        board.unshift(Array(COLS).fill(''));
+        cleared++;
+        y++;
+      }
+
+      if (cleared > 0) {
+        lines += cleared;
+        const gain = [0, 100, 300, 500, 800][cleared] || (cleared * 200);
+        score += gain * level;
+        level = Math.floor(lines / 10) + 1;
+        dropInterval = Math.max(110, 800 - (level - 1) * 65);
+        updateStats();
+      }
+    }
+
+    function spawnPiece() {
+      current = next || randomPiece();
+      next = randomPiece();
+      drawNext();
+      if (collide(current)) {
+        running = false;
+        gameOver = true;
+        setStatus(t('statusGameOver'), true);
+        if (score > best) {
+          best = score;
+          localStorage.setItem('clawdcity_tetris_best', String(best));
+          bestEl.textContent = best;
+        }
+      }
+    }
+
+    function rotateMatrix(m) {
+      const n = m.length;
+      const out = Array.from({length: n}, () => Array(n).fill(0));
+      for (let y = 0; y < n; y++) {
+        for (let x = 0; x < n; x++) {
+          out[x][n - 1 - y] = m[y][x];
+        }
+      }
+      return out;
+    }
+
+    function tryRotate() {
+      const original = current.matrix;
+      const rotated = rotateMatrix(current.matrix);
+      current.matrix = rotated;
+      const kicks = [0, -1, 1, -2, 2];
+      for (const dx of kicks) {
+        current.x += dx;
+        if (!collide(current)) return;
+        current.x -= dx;
+      }
+      current.matrix = original;
+    }
+
+    function move(dx, dy) {
+      if (!running || paused || gameOver) return;
+      current.x += dx;
+      current.y += dy;
+      if (collide(current)) {
+        current.x -= dx;
+        current.y -= dy;
+        if (dy === 1) {
+          mergePiece();
+          clearLines();
+          spawnPiece();
+        }
+      }
+      draw();
+    }
+
+    function hardDrop() {
+      if (!running || paused || gameOver) return;
+      while (!collide(current)) current.y++;
+      current.y--;
+      mergePiece();
+      clearLines();
+      spawnPiece();
+      draw();
+    }
+
+    function drawCell(cx, cy, color, context, size) {
+      const px = cx * size;
+      const py = cy * size;
+      context.fillStyle = color;
+      context.fillRect(px + 1, py + 1, size - 2, size - 2);
+      context.fillStyle = '#ffffff66';
+      context.fillRect(px + 4, py + 4, size - 10, 5);
+      context.strokeStyle = '#00000033';
+      context.lineWidth = 2;
+      context.strokeRect(px + 1, py + 1, size - 2, size - 2);
+    }
+
+    function drawBoardGrid() {
+      ctx.clearRect(0, 0, boardCanvas.width, boardCanvas.height);
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          ctx.fillStyle = '#16305d';
+          ctx.fillRect(x * BLOCK, y * BLOCK, BLOCK, BLOCK);
+          ctx.strokeStyle = '#ffffff14';
+          ctx.strokeRect(x * BLOCK, y * BLOCK, BLOCK, BLOCK);
+          if (board[y][x]) drawCell(x, y, COLORS[board[y][x]], ctx, BLOCK);
+        }
+      }
+    }
+
+    function drawCurrent() {
+      if (!current) return;
+      for (let y = 0; y < current.matrix.length; y++) {
+        for (let x = 0; x < current.matrix[y].length; x++) {
+          if (!current.matrix[y][x]) continue;
+          const bx = current.x + x;
+          const by = current.y + y;
+          if (by < 0) continue;
+          drawCell(bx, by, COLORS[current.type], ctx, BLOCK);
+        }
+      }
+    }
+
+    function drawNext() {
+      nctx.clearRect(0, 0, nextCanvas.width, nextCanvas.height);
+      if (!next) return;
+      const size = 24;
+      const w = next.matrix[0].length;
+      const h = next.matrix.length;
+      const ox = Math.floor((nextCanvas.width - w * size) / 2);
+      const oy = Math.floor((nextCanvas.height - h * size) / 2);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (!next.matrix[y][x]) continue;
+          drawCell((ox / size) + x, (oy / size) + y, COLORS[next.type], nctx, size);
+        }
+      }
+    }
+
+    function draw() {
+      drawBoardGrid();
+      drawCurrent();
+    }
+
+    function updateStats() {
+      scoreEl.textContent = score;
+      linesEl.textContent = lines;
+      levelEl.textContent = level;
+    }
+
+    function setStatus(text, danger = false) {
+      statusEl.textContent = text;
+      statusEl.style.background = danger ? '#fff0f3' : '#effaf3';
+      statusEl.style.borderColor = danger ? '#ffc5d2' : '#c9f0d8';
+      statusEl.style.color = danger ? '#8a2238' : '#236a42';
+    }
+
+    function tick(time = 0) {
+      if (!running || paused || gameOver) return;
+      const dt = time - lastTime;
+      lastTime = time;
+      dropCounter += dt;
+      if (dropCounter > dropInterval) {
+        move(0, 1);
+        dropCounter = 0;
+      }
+      draw();
+      requestAnimationFrame(tick);
+    }
+
+    function startGame() {
+      if (gameOver) {
+        restartGame();
+        return;
+      }
+      if (!running) {
+        running = true;
+        paused = false;
+        setStatus(t('statusRunning'));
+        lastTime = performance.now();
+        requestAnimationFrame(tick);
+      } else if (paused) {
+        paused = false;
+        setStatus(t('statusResumed'));
+        lastTime = performance.now();
+        requestAnimationFrame(tick);
+      }
+    }
+
+    function pauseGame() {
+      if (!running || gameOver) return;
+      paused = !paused;
+      if (paused) {
+        setStatus(t('statusPaused'));
+      } else {
+        setStatus(t('statusResumed'));
+        lastTime = performance.now();
+        requestAnimationFrame(tick);
+      }
+    }
+
+    function restartGame() {
+      createBoard();
+      score = 0;
+      lines = 0;
+      level = 1;
+      dropInterval = 800;
+      dropCounter = 0;
+      running = false;
+      paused = false;
+      gameOver = false;
+      next = randomPiece();
+      spawnPiece();
+      updateStats();
+      draw();
+      setStatus(t('statusRestarted'));
+    }
+
+    function fmt(s, vars) {
+      let out = s;
+      for (const k in vars) out = out.replace(`{${k}}`, vars[k]);
+      return out;
+    }
+
+    const query = new URLSearchParams(window.location.search);
+    const apiBase = (query.get('apiBase') || `${window.location.protocol}//${window.location.hostname}:8080`).replace(/\/+$/, '');
+
+    function apiURL(path) {
+      const normalized = path.startsWith('/') ? path : `/${path}`;
+      return `${apiBase}${normalized}`;
+    }
+
+    async function apiPost(url, payload) {
+      const res = await fetch(apiURL(url), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        mode: 'cors',
+        body: JSON.stringify(payload)
+      });
+      return await res.json();
+    }
+
+    function appendRoomLog(msg) {
+      const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      const prev = roomLogEl.textContent ? roomLogEl.textContent + '\n' : '';
+      roomLogEl.textContent = prev + line;
+      roomLogEl.scrollTop = roomLogEl.scrollHeight;
+    }
+
+    function updateRoomMeta() {
+      if (!roomId) {
+        roomMetaEl.textContent = t('roomMetaIdle');
+        return;
+      }
+      roomMetaEl.textContent = fmt(t('roomMetaFmt'), {
+        player: playerIdInput.value.trim() || '-',
+        room: roomId || '-',
+        host: hostId || '-',
+        mode: controlMode
+      });
+      agentToggleBtn.textContent = controlMode === 'agent' ? t('switchHuman') : t('switchAgent');
+    }
+
+    async function registerPlayer() {
+      const player = playerIdInput.value.trim();
+      if (!player) return;
+      const data = await apiPost('/api/tetris/register', {player_id: player, app_id: 'tetris', version: '0.1.0'});
+      appendRoomLog(`register -> ${JSON.stringify(data)}`);
+      updateRoomMeta();
+    }
+
+    async function readyPlayer() {
+      const player = playerIdInput.value.trim();
+      if (!player) return;
+      const ping = Number(pingInput.value || 0);
+      const data = await apiPost('/api/tetris/ready', {player_id: player, ping_ms: ping});
+      if (data.room && data.room.id) {
+        roomId = data.room.id;
+        hostId = data.room.host_id || '';
+        connectRoomStream(roomId);
+      }
+      appendRoomLog(`ready -> ${JSON.stringify(data)}`);
+      updateRoomMeta();
+    }
+
+    function connectRoomStream(id) {
+      if (roomStream) roomStream.close();
+      roomStream = new EventSource(apiURL(`/api/tetris/room/${id}/stream`));
+      roomStream.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          if (data.type === 'control_switch_applied' && data.meta && data.meta.player_id === playerIdInput.value.trim()) {
+            controlMode = data.meta.to_mode || controlMode;
+            updateRoomMeta();
+          }
+          if (data.room && data.room.host_id) {
+            hostId = data.room.host_id;
+            updateRoomMeta();
+          }
+          appendRoomLog(`room event -> ${ev.data}`);
+        } catch (_) {
+          appendRoomLog(`room event(raw) -> ${ev.data}`);
+        }
+      };
+      roomStream.onerror = () => appendRoomLog('room stream disconnected');
+    }
+
+    async function toggleAgent() {
+      if (!roomId) return;
+      const player = playerIdInput.value.trim();
+      const toMode = controlMode === 'agent' ? 'human' : 'agent';
+      const payload = {player_id: player, to_mode: toMode, agent_id: toMode === 'agent' ? 'openclaw-agent' : ''};
+      const data = await apiPost(`/api/tetris/room/${roomId}/control`, payload);
+      if (data.player) {
+        controlMode = data.player.control_mode || controlMode;
+      }
+      appendRoomLog(`control -> ${JSON.stringify(data)}`);
+      updateRoomMeta();
+    }
+
+    function canHumanControl() {
+      return controlMode === 'human';
+    }
+
+    function sendRoomInput(action, payload = {}) {
+      if (!roomId) return;
+      const player = playerIdInput.value.trim();
+      if (!player) return;
+      fetch(apiURL(`/api/tetris/room/${roomId}/input`), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        mode: 'cors',
+        body: JSON.stringify({player_id: player, source: 'human', action, payload})
+      }).catch(() => {});
+    }
+
+    function handleKey(e) {
+      if (["ArrowLeft", "ArrowRight", "ArrowDown", "ArrowUp", " ", "p", "P"].includes(e.key)) e.preventDefault();
+      if (!canHumanControl()) return;
+      if (e.key === 'ArrowLeft') { move(-1, 0); sendRoomInput('move_left'); }
+      if (e.key === 'ArrowRight') { move(1, 0); sendRoomInput('move_right'); }
+      if (e.key === 'ArrowDown') { move(0, 1); sendRoomInput('soft_drop'); }
+      if (e.key === 'ArrowUp') { if (running && !paused && !gameOver) { tryRotate(); draw(); sendRoomInput('rotate'); } }
+      if (e.key === ' ') { hardDrop(); sendRoomInput('hard_drop'); }
+      if (e.key === 'p' || e.key === 'P') pauseGame();
+    }
+
+    startBtn.addEventListener('click', startGame);
+    pauseBtn.addEventListener('click', pauseGame);
+    pauseBtn2.addEventListener('click', pauseGame);
+    restartBtn.addEventListener('click', restartGame);
+
+    leftBtn.addEventListener('click', () => { if (!canHumanControl()) return; move(-1, 0); sendRoomInput('move_left'); });
+    rightBtn.addEventListener('click', () => { if (!canHumanControl()) return; move(1, 0); sendRoomInput('move_right'); });
+    downBtn.addEventListener('click', () => { if (!canHumanControl()) return; move(0, 1); sendRoomInput('soft_drop'); });
+    dropBtn.addEventListener('click', () => { if (!canHumanControl()) return; hardDrop(); sendRoomInput('hard_drop'); });
+    rotateBtn.addEventListener('click', () => { if (!canHumanControl()) return; if (running && !paused && !gameOver) { tryRotate(); draw(); sendRoomInput('rotate'); } });
+    registerBtn.addEventListener('click', registerPlayer);
+    readyBtn.addEventListener('click', readyPlayer);
+    agentToggleBtn.addEventListener('click', toggleAgent);
+
+    window.addEventListener('keydown', handleKey, {passive: false});
+    langSelect.value = currentLang;
+    langSelect.addEventListener('change', () => {
+      currentLang = langSelect.value;
+      localStorage.setItem('clawdcity_tetris_lang', currentLang);
+      applyI18n();
+      if (!running && !gameOver) {
+        setStatus(t('statusReady'));
+      }
+    });
+
+    applyI18n();
+    updateRoomMeta();
+    restartGame();
+  </script>
+</body>
+</html>
