@@ -437,7 +437,7 @@
     let score = 0;
     let lines = 0;
     let level = 1;
-    let dropInterval = 800;
+    let dropInterval = 1200;
     let dropCounter = 0;
     let lastTime = 0;
     let running = false;
@@ -549,9 +549,9 @@
         lines += cleared;
         const gain = [0, 100, 300, 500, 800][cleared] || (cleared * 200);
         score += gain * level;
-        level = Math.floor(lines / 10) + 1;
-        dropInterval = Math.max(110, 800 - (level - 1) * 65);
-        updateStats();
+      level = Math.floor(lines / 10) + 1;
+      dropInterval = Math.max(260, 1200 - (level - 1) * 45);
+      updateStats();
       }
     }
 
@@ -744,7 +744,7 @@
       score = 0;
       lines = 0;
       level = 1;
-      dropInterval = 800;
+      dropInterval = 1200;
       dropCounter = 0;
       running = false;
       paused = false;
@@ -777,7 +777,12 @@
         mode: 'cors',
         body: JSON.stringify(payload)
       });
-      return await res.json();
+      const data = await res.json();
+      if (!res.ok) {
+        const err = (data && data.error) ? data.error : `request failed: ${res.status}`;
+        throw new Error(err);
+      }
+      return data;
     }
 
     async function apiGet(url) {
@@ -918,48 +923,56 @@
     }
 
     async function registerPlayer() {
-      const player = playerIdInput.value.trim();
-      if (!player) return;
-      roomId = '';
-      hostId = '';
-      controlMode = 'human';
-      roomPlayers = [];
-      for (const k in remoteStates) delete remoteStates[k];
-      gameStarted = false;
-      if (roomPollTimer) {
-        clearInterval(roomPollTimer);
-        roomPollTimer = null;
+      try {
+        const player = playerIdInput.value.trim();
+        if (!player) return;
+        roomId = '';
+        hostId = '';
+        controlMode = 'human';
+        roomPlayers = [];
+        for (const k in remoteStates) delete remoteStates[k];
+        gameStarted = false;
+        if (roomPollTimer) {
+          clearInterval(roomPollTimer);
+          roomPollTimer = null;
+        }
+        if (roomStateSyncTimer) {
+          clearInterval(roomStateSyncTimer);
+          roomStateSyncTimer = null;
+        }
+        const data = await apiPost('/api/tetris/register', {player_id: player, app_id: 'tetris', version: '0.1.0'});
+        appendRoomLog(`register -> ${JSON.stringify(data)}`);
+        renderRoomThumbs();
+        updateRoomMeta();
+      } catch (err) {
+        appendRoomLog(`register error -> ${err && err.message ? err.message : String(err)}`);
       }
-      if (roomStateSyncTimer) {
-        clearInterval(roomStateSyncTimer);
-        roomStateSyncTimer = null;
-      }
-      const data = await apiPost('/api/tetris/register', {player_id: player, app_id: 'tetris', version: '0.1.0'});
-      appendRoomLog(`register -> ${JSON.stringify(data)}`);
-      renderRoomThumbs();
-      updateRoomMeta();
     }
 
     async function readyPlayer() {
-      const player = playerIdInput.value.trim();
-      if (!player) return;
-      const ping = Number(pingInput.value || 0);
-      const data = await apiPost('/api/tetris/ready', {player_id: player, ping_ms: ping});
-      if (data.room && data.room.id) {
-        roomId = data.room.id;
-        hostId = data.room.host_id || '';
-        roomPlayers = data.room.player_ids || [];
-        connectRoomStream(roomId);
-        startRoomStateSync();
-        setStatus(t('statusRunning'));
-        startGame();
+      try {
+        const player = playerIdInput.value.trim();
+        if (!player) return;
+        const ping = Number(pingInput.value || 0);
+        const data = await apiPost('/api/tetris/ready', {player_id: player, ping_ms: ping});
+        if (data.room && data.room.id) {
+          roomId = data.room.id;
+          hostId = data.room.host_id || '';
+          roomPlayers = data.room.player_ids || [];
+          connectRoomStream(roomId);
+          startRoomStateSync();
+          setStatus(t('statusRunning'));
+          startGame();
+        }
+        appendRoomLog(`ready -> ${JSON.stringify(data)}`);
+        if (!data.matched) {
+          appendRoomLog(t('roomWaiting'));
+          startRoomPolling(player);
+        }
+        updateRoomMeta();
+      } catch (err) {
+        appendRoomLog(`ready error -> ${err && err.message ? err.message : String(err)}`);
       }
-      appendRoomLog(`ready -> ${JSON.stringify(data)}`);
-      if (!data.matched) {
-        appendRoomLog(t('roomWaiting'));
-        startRoomPolling(player);
-      }
-      updateRoomMeta();
     }
 
     function startRoomPolling(player) {
@@ -1052,16 +1065,39 @@
     }
 
     async function toggleAgent() {
-      if (!roomId) return;
-      const player = playerIdInput.value.trim();
-      const toMode = controlMode === 'agent' ? 'human' : 'agent';
-      const payload = {player_id: player, to_mode: toMode, agent_id: toMode === 'agent' ? 'openclaw-agent' : ''};
-      const data = await apiPost(`/api/tetris/room/${roomId}/control`, payload);
-      if (data.player) {
-        controlMode = data.player.control_mode || controlMode;
+      try {
+        const player = playerIdInput.value.trim();
+        if (!player) return;
+        if (!roomId) {
+          const p = await apiGet(`/api/tetris/player/${encodeURIComponent(player)}`);
+          if (p && p.player && p.player.room_id) {
+            roomId = p.player.room_id;
+            appendRoomLog(`resolved room by player -> ${roomId}`);
+            try {
+              const roomData = await apiGet(`/api/tetris/room/${encodeURIComponent(roomId)}`);
+              hostId = (roomData.room && roomData.room.host_id) || hostId;
+              roomPlayers = (roomData.room && roomData.room.player_ids) || roomPlayers;
+              connectRoomStream(roomId);
+              renderRoomThumbs();
+              updateRoomMeta();
+            } catch (_) {}
+          } else {
+            appendRoomLog('cannot switch: room not assigned yet');
+            return;
+          }
+        }
+        const toMode = controlMode === 'agent' ? 'human' : 'agent';
+        const payload = {player_id: player, to_mode: toMode, agent_id: toMode === 'agent' ? 'openclaw-agent' : ''};
+        const data = await apiPost(`/api/tetris/room/${roomId}/control`, payload);
+        if (data.player) {
+          controlMode = data.player.control_mode || controlMode;
+          if (data.player.room_id) roomId = data.player.room_id;
+        }
+        appendRoomLog(`control -> ${JSON.stringify(data)}`);
+        updateRoomMeta();
+      } catch (err) {
+        appendRoomLog(`control error -> ${err && err.message ? err.message : String(err)}`);
       }
-      appendRoomLog(`control -> ${JSON.stringify(data)}`);
-      updateRoomMeta();
     }
 
     function canHumanControl() {
