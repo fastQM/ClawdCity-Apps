@@ -110,6 +110,22 @@
     button.primary { background: linear-gradient(180deg, #ff9d73, var(--accent)); }
     button.secondary { background: linear-gradient(180deg, #78b8ff, var(--accent2)); }
     button.warn { background: linear-gradient(180deg, #ff7b95, var(--warn)); }
+    input, select {
+      width: 100%;
+      min-width: 0;
+      border: 2px solid #d1e3fb;
+      border-radius: 10px;
+      padding: 8px 10px;
+      font: inherit;
+      color: var(--ink);
+      background: #fff;
+    }
+    label.input-label {
+      display: block;
+      font-size: 12px;
+      opacity: .82;
+      margin-bottom: 4px;
+    }
 
     .mini-title {
       margin: 12px 0 6px;
@@ -215,12 +231,6 @@
         <div class="stat"><b id="labelBest">Best</b><span id="best">0</span></div>
       </div>
 
-      <div class="btns">
-        <button class="primary" id="startBtn">Start / Resume</button>
-        <button class="secondary" id="pauseBtn">Pause</button>
-        <button class="warn" id="restartBtn" style="grid-column: 1 / -1;">Restart</button>
-      </div>
-
       <div class="mini-title" id="nextTitle">Next Piece</div>
       <div class="next-wrap"><canvas id="next" width="120" height="120"></canvas></div>
 
@@ -233,8 +243,14 @@
       <div class="mini-title" id="roomTitle">Realtime Room</div>
       <div class="hint" style="margin-top:6px;">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
-          <input id="playerIdInput" placeholder="player id" value="player_a" />
-          <input id="pingInput" type="number" min="0" value="40" />
+          <div>
+            <label class="input-label" id="playerIdLabel" for="playerIdInput">Player ID</label>
+            <input id="playerIdInput" placeholder="player id" value="player_a" />
+          </div>
+          <div>
+            <label class="input-label" id="pingLabel" for="pingInput">Ping (ms)</label>
+            <input id="pingInput" type="number" min="0" max="9999" value="40" />
+          </div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px;">
           <button class="secondary" id="registerBtn">Register</button>
@@ -253,7 +269,6 @@
         <button id="rightBtn">Right</button>
         <button id="downBtn">Down</button>
         <button id="dropBtn">Hard Drop</button>
-        <button id="pauseBtn2">Pause/Resume</button>
       </div>
     </section>
 
@@ -305,9 +320,8 @@
         lines: 'Lines',
         level: 'Level',
         best: 'Best',
-        start: 'Start / Resume',
-        pause: 'Pause',
-        restart: 'Restart',
+        playerId: 'Player ID',
+        ping: 'Ping (ms)',
         next: 'Next Piece',
         hint: 'Keyboard: ← → move, ↑ rotate, ↓ soft drop, Space hard drop, P pause.',
         left: 'Left',
@@ -315,7 +329,6 @@
         right: 'Right',
         down: 'Down',
         drop: 'Hard Drop',
-        pause2: 'Pause/Resume',
         roomTitle: 'Realtime Room',
         register: 'Register',
         ready: 'Ready',
@@ -338,9 +351,8 @@
         lines: '消行',
         level: '等级',
         best: '最高分',
-        start: '开始 / 继续',
-        pause: '暂停',
-        restart: '重新开始',
+        playerId: '玩家ID',
+        ping: '延迟(ms)',
         next: '下一个方块',
         hint: '键盘：← → 移动，↑ 旋转，↓ 加速，空格硬降，P 暂停。',
         left: '左',
@@ -348,7 +360,6 @@
         right: '右',
         down: '下',
         drop: '落到底',
-        pause2: '暂停/继续',
         roomTitle: '实时房间',
         register: '注册',
         ready: '准备',
@@ -368,16 +379,11 @@
     let currentLang = localStorage.getItem('clawdcity_tetris_lang') || 'en';
     if (!I18N[currentLang]) currentLang = 'en';
 
-    const startBtn = document.getElementById('startBtn');
-    const pauseBtn = document.getElementById('pauseBtn');
-    const restartBtn = document.getElementById('restartBtn');
-
     const leftBtn = document.getElementById('leftBtn');
     const rightBtn = document.getElementById('rightBtn');
     const downBtn = document.getElementById('downBtn');
     const dropBtn = document.getElementById('dropBtn');
     const rotateBtn = document.getElementById('rotateBtn');
-    const pauseBtn2 = document.getElementById('pauseBtn2');
     const playerIdInput = document.getElementById('playerIdInput');
     const pingInput = document.getElementById('pingInput');
     const registerBtn = document.getElementById('registerBtn');
@@ -403,6 +409,7 @@
     let hostId = '';
     let controlMode = 'human';
     let roomStream = null;
+    let roomPollTimer = null;
 
     bestEl.textContent = best;
 
@@ -420,17 +427,15 @@
       document.getElementById('labelLines').textContent = t('lines');
       document.getElementById('labelLevel').textContent = t('level');
       document.getElementById('labelBest').textContent = t('best');
+      document.getElementById('playerIdLabel').textContent = t('playerId');
+      document.getElementById('pingLabel').textContent = t('ping');
       document.getElementById('nextTitle').textContent = t('next');
       document.getElementById('hintText').textContent = t('hint');
-      startBtn.textContent = t('start');
-      pauseBtn.textContent = t('pause');
-      restartBtn.textContent = t('restart');
       leftBtn.textContent = t('left');
       rotateBtn.textContent = t('rotate');
       rightBtn.textContent = t('right');
       downBtn.textContent = t('down');
       dropBtn.textContent = t('drop');
-      pauseBtn2.textContent = t('pause2');
       document.getElementById('roomTitle').textContent = t('roomTitle');
       registerBtn.textContent = t('register');
       readyBtn.textContent = t('ready');
@@ -726,6 +731,11 @@
       return await res.json();
     }
 
+    async function apiGet(url) {
+      const res = await fetch(apiURL(url), {mode: 'cors'});
+      return await res.json();
+    }
+
     function appendRoomLog(msg) {
       const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
       const prev = roomLogEl.textContent ? roomLogEl.textContent + '\n' : '';
@@ -750,6 +760,13 @@
     async function registerPlayer() {
       const player = playerIdInput.value.trim();
       if (!player) return;
+      roomId = '';
+      hostId = '';
+      controlMode = 'human';
+      if (roomPollTimer) {
+        clearInterval(roomPollTimer);
+        roomPollTimer = null;
+      }
       const data = await apiPost('/api/tetris/register', {player_id: player, app_id: 'tetris', version: '0.1.0'});
       appendRoomLog(`register -> ${JSON.stringify(data)}`);
       updateRoomMeta();
@@ -766,7 +783,32 @@
         connectRoomStream(roomId);
       }
       appendRoomLog(`ready -> ${JSON.stringify(data)}`);
+      if (!data.matched) {
+        startRoomPolling(player);
+      }
       updateRoomMeta();
+    }
+
+    function startRoomPolling(player) {
+      if (roomPollTimer) clearInterval(roomPollTimer);
+      roomPollTimer = setInterval(async () => {
+        if (roomId) {
+          clearInterval(roomPollTimer);
+          roomPollTimer = null;
+          return;
+        }
+        const data = await apiGet(`/api/tetris/player/${encodeURIComponent(player)}`);
+        const p = data.player || {};
+        if (!p.room_id) return;
+        roomId = p.room_id;
+        const roomData = await apiGet(`/api/tetris/room/${encodeURIComponent(roomId)}`);
+        hostId = (roomData.room && roomData.room.host_id) || hostId;
+        connectRoomStream(roomId);
+        appendRoomLog(`matched via poll -> ${JSON.stringify(roomData)}`);
+        updateRoomMeta();
+        clearInterval(roomPollTimer);
+        roomPollTimer = null;
+      }, 1200);
     }
 
     function connectRoomStream(id) {
@@ -831,11 +873,6 @@
       if (e.key === 'p' || e.key === 'P') pauseGame();
     }
 
-    startBtn.addEventListener('click', startGame);
-    pauseBtn.addEventListener('click', pauseGame);
-    pauseBtn2.addEventListener('click', pauseGame);
-    restartBtn.addEventListener('click', restartGame);
-
     leftBtn.addEventListener('click', () => { if (!canHumanControl()) return; move(-1, 0); sendRoomInput('move_left'); });
     rightBtn.addEventListener('click', () => { if (!canHumanControl()) return; move(1, 0); sendRoomInput('move_right'); });
     downBtn.addEventListener('click', () => { if (!canHumanControl()) return; move(0, 1); sendRoomInput('soft_drop'); });
@@ -859,6 +896,7 @@
     applyI18n();
     updateRoomMeta();
     restartGame();
+    startGame();
   </script>
 </body>
 </html>
