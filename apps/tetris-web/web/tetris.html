@@ -330,6 +330,7 @@
     };
 
     const KEYS = Object.keys(SHAPES);
+    const PLAYER_ID_KEY = 'clawdcity_tetris_player_id';
 
     const boardCanvas = document.getElementById('board');
     const ctx = boardCanvas.getContext('2d');
@@ -455,6 +456,7 @@
     const remoteStates = {};
     let cachedSpec = null;
     let stateSyncMS = 500;
+    let prngState = 1;
 
     bestEl.textContent = best;
 
@@ -499,13 +501,31 @@
     }
 
     function randomPiece() {
-      const type = KEYS[Math.floor(Math.random() * KEYS.length)];
+      const type = KEYS[Math.floor(nextRand() * KEYS.length)];
       return {
         type,
         matrix: cloneMatrix(SHAPES[type]),
         x: Math.floor((COLS - SHAPES[type][0].length) / 2),
         y: -1
       };
+    }
+
+    function fnv1a32(str) {
+      let h = 2166136261;
+      for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return (h >>> 0) || 1;
+    }
+
+    function seedPieceRNG(seedText) {
+      prngState = fnv1a32(seedText);
+    }
+
+    function nextRand() {
+      prngState = (Math.imul(prngState, 1664525) + 1013904223) >>> 0;
+      return prngState / 4294967296;
     }
 
     function collide(p, b = board) {
@@ -749,6 +769,11 @@
       running = false;
       paused = false;
       gameOver = false;
+      if (roomId) {
+        seedPieceRNG(`room:${roomId}`);
+      } else {
+        seedPieceRNG(`player:${playerIdInput.value.trim() || 'default'}`);
+      }
       next = randomPiece();
       spawnPiece();
       updateStats();
@@ -942,10 +967,14 @@
         }
         const data = await apiPost('/api/tetris/register', {player_id: player, app_id: 'tetris', version: '0.1.0'});
         appendRoomLog(`register -> ${JSON.stringify(data)}`);
+        localStorage.setItem(PLAYER_ID_KEY, player);
         renderRoomThumbs();
         updateRoomMeta();
       } catch (err) {
         appendRoomLog(`register error -> ${err && err.message ? err.message : String(err)}`);
+        if (String(err && err.message || '').includes('local seat already occupied')) {
+          appendRoomLog('tip -> keep the same player_id after refresh on this node');
+        }
       }
     }
 
@@ -959,6 +988,7 @@
           roomId = data.room.id;
           hostId = data.room.host_id || '';
           roomPlayers = data.room.player_ids || [];
+          restartGame();
           connectRoomStream(roomId);
           startRoomStateSync();
           setStatus(t('statusRunning'));
@@ -990,6 +1020,7 @@
         const roomData = await apiGet(`/api/tetris/room/${encodeURIComponent(roomId)}`);
         hostId = (roomData.room && roomData.room.host_id) || hostId;
         roomPlayers = (roomData.room && roomData.room.player_ids) || roomPlayers;
+        restartGame();
         connectRoomStream(roomId);
         startRoomStateSync();
         appendRoomLog(`matched via poll -> ${JSON.stringify(roomData)}`);
@@ -1150,7 +1181,14 @@
     (async function bootstrap() {
       await loadGameSpec();
       applyI18n();
-      playerIdInput.value = `player_${Math.random().toString(36).slice(2, 7)}`;
+      const savedPlayerID = localStorage.getItem(PLAYER_ID_KEY);
+      if (savedPlayerID && savedPlayerID.trim()) {
+        playerIdInput.value = savedPlayerID.trim();
+      } else {
+        const generated = `player_${Math.random().toString(36).slice(2, 7)}`;
+        playerIdInput.value = generated;
+        localStorage.setItem(PLAYER_ID_KEY, generated);
+      }
       updateRoomMeta();
       restartGame();
       setStatus(t('roomMetaIdle'));
