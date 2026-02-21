@@ -201,8 +201,17 @@
       backdrop-filter: blur(8px);
       padding: 12px;
       display: grid;
-      grid-template-columns: 1fr auto;
+      grid-template-columns: 1fr auto auto;
       gap: 10px;
+      align-items: center;
+    }
+    .composer .attach { width: auto; }
+    .img-preview {
+      max-width: 200px;
+      max-height: 160px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      margin-top: 8px;
     }
 
     @media (max-width: 980px) {
@@ -301,6 +310,7 @@
 
       <footer class="composer">
         <input id="chatInput" placeholder="Type a message..." />
+        <input id="chatFile" class="attach" type="file" accept="image/*" />
         <button onclick="sendMessage()">Send</button>
       </footer>
     </main>
@@ -310,6 +320,7 @@
     let latestState = null;
     let selectedFriend = '';
     let es = null;
+    let pendingMedia = null;
 
     function esc(s) { return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
@@ -396,7 +407,9 @@
         const mine = m.from_user_id === me.user_id;
         const cls = mine ? 'bubble me' : 'bubble';
         const who = mine ? 'You' : (peer.username || m.from_user_id);
-        return `<div class="${cls}"><div>${esc(m.body)}</div><div class="meta">${esc(who)} · ${esc(m.created_at || '')}</div></div>`;
+        const text = m.body ? `<div>${esc(m.body)}</div>` : '';
+        const image = m.media_data && String(m.media_mime || '').startsWith('image/') ? `<img class="img-preview" src="${esc(m.media_data)}" alt="${esc(m.media_name || 'image')}" />` : '';
+        return `<div class="${cls}">${text}${image}<div class="meta">${esc(who)} · ${esc(m.created_at || '')}</div></div>`;
       }).join('') || '<div class="muted">No messages yet.</div>';
       const stream = document.getElementById('chatStream');
       stream.innerHTML = html;
@@ -506,11 +519,37 @@
       if (!selectedFriend) return;
       const input = document.getElementById('chatInput');
       const body = input.value.trim();
-      if (!body) return;
-      const res = await postJSON('/api/social/v1/messages/send', {to_user_id: selectedFriend, body});
+      if (!body && !pendingMedia) return;
+      const res = await postJSON('/api/social/v1/messages/send', {
+        to_user_id: selectedFriend,
+        body,
+        media_name: pendingMedia ? pendingMedia.name : '',
+        media_mime: pendingMedia ? pendingMedia.mime : '',
+        media_data: pendingMedia ? pendingMedia.data : ''
+      });
       if (res.error) return alert(res.error);
       input.value = '';
+      pendingMedia = null;
+      document.getElementById('chatFile').value = '';
     }
+
+    document.getElementById('chatFile').addEventListener('change', (ev) => {
+      const file = ev.target.files && ev.target.files[0];
+      if (!file) {
+        pendingMedia = null;
+        return;
+      }
+      if (!file.type.startsWith('image/')) {
+        alert('Only image files are supported currently.');
+        ev.target.value = '';
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        pendingMedia = {name: file.name || 'image', mime: file.type || 'image/*', data: String(reader.result || '')};
+      };
+      reader.readAsDataURL(file);
+    });
 
     loadInitialState();
     connectSSE();

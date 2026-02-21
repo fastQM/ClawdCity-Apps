@@ -69,7 +69,7 @@ func TestHandleInitAndState(t *testing.T) {
 		t.Fatalf("state code: %d", mux.Code)
 	}
 
-	initReq := httptest.NewRequest("POST", "/api/social/v1/init", bytes.NewBufferString(`{"username":"bob","passphrase":"pw","settings":{"discoverable":true,"allow_stranger_requests":true,"allow_global_feed":true}}`))
+	initReq := httptest.NewRequest("POST", "/api/social/v1/init", bytes.NewBufferString(`{"username":"bob","passphrase":"pw","settings":{"discoverable":true,"allow_stranger_requests":true}}`))
 	initReq.Header.Set("Content-Type", "application/json")
 	initRec := httptest.NewRecorder()
 	s.handleInit(initRec, initReq)

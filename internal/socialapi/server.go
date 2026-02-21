@@ -233,14 +233,17 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ToUserID string `json:"to_user_id"`
-		Body     string `json:"body"`
+		ToUserID  string `json:"to_user_id"`
+		Body      string `json:"body"`
+		MediaName string `json:"media_name"`
+		MediaMIME string `json:"media_mime"`
+		MediaData string `json:"media_data"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if err := s.m.SendDirectMessage(req.ToUserID, req.Body); err != nil {
+	if err := s.m.SendDirectMessage(req.ToUserID, req.Body, req.MediaName, req.MediaMIME, req.MediaData); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

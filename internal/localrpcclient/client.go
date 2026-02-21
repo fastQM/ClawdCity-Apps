@@ -81,10 +81,32 @@ type HistoryReply struct {
 type StatusArgs struct{}
 
 type StatusReply struct {
-	Transport      string
-	PeerID         string
-	ConnectedPeers int
-	Error          string
+	Transport           string
+	PeerID              string
+	ConnectedPeers      int
+	ListenAddrs         []string
+	ConnectedPeerIDs    []string
+	ConnectedPeerAddrs  []string
+	StartedAt           time.Time
+	ActiveSubscriptions int
+	MessagesPublished   int64
+	MessagesInNetwork   int64
+	MessagesInStream    int64
+	MessagesFanout      int64
+	DirectSends         int64
+	Error               string
+}
+
+type SendDirectArgs struct {
+	AppID   string
+	PeerID  string
+	Topic   string
+	Payload []byte
+}
+
+type SendDirectReply struct {
+	Sent  bool
+	Error string
 }
 
 type Client struct {
@@ -140,5 +162,11 @@ func (c *Client) FetchHistory(args HistoryArgs) (HistoryReply, error) {
 func (c *Client) GetStatus() (StatusReply, error) {
 	var out StatusReply
 	err := c.call("P2P.GetStatus", StatusArgs{}, &out)
+	return out, err
+}
+
+func (c *Client) SendDirect(args SendDirectArgs) (SendDirectReply, error) {
+	var out SendDirectReply
+	err := c.call("P2P.SendDirect", args, &out)
 	return out, err
 }

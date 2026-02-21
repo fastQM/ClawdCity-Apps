@@ -51,6 +51,7 @@ type Profile struct {
 
 type KnownUser struct {
 	UserID        string    `json:"user_id"`
+	PeerID        string    `json:"peer_id,omitempty"`
 	Username      string    `json:"username"`
 	Bio           string    `json:"bio"`
 	AvatarData    string    `json:"avatar_data,omitempty"`
@@ -82,6 +83,9 @@ type DirectMessage struct {
 	FromUserID string    `json:"from_user_id"`
 	ToUserID   string    `json:"to_user_id"`
 	Body       string    `json:"body"`
+	MediaName  string    `json:"media_name,omitempty"`
+	MediaMIME  string    `json:"media_mime,omitempty"`
+	MediaData  string    `json:"media_data,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 
@@ -116,6 +120,7 @@ type Manager struct {
 	seenMessageIDs  map[string]struct{}
 	listeners       map[int]chan string
 	nextListenerID  int
+	nodePeerID      string
 
 	subscriptionID string
 	cancel         context.CancelFunc
@@ -141,6 +146,7 @@ func NewManager(cfg Config) (*Manager, error) {
 		return nil, err
 	}
 	_ = m.loadState()
+	m.refreshNodeStatus()
 	if cfg.Passphrase != "" {
 		_ = m.unlock(cfg.Passphrase)
 	}
@@ -366,7 +372,7 @@ func (m *Manager) RespondFriendRequest(requestID string, accept bool) error {
 	return m.saveStateLocked()
 }
 
-func (m *Manager) SendDirectMessage(toUserID, body string) error {
+func (m *Manager) SendDirectMessage(toUserID, body, mediaName, mediaMIME, mediaData string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.friends[toUserID]; !ok {
@@ -376,21 +382,55 @@ func (m *Manager) SendDirectMessage(toUserID, body string) error {
 	if !ok {
 		return errors.New("target user not discovered")
 	}
-	if strings.TrimSpace(body) == "" {
-		return errors.New("message body required")
+	if strings.TrimSpace(body) == "" && strings.TrimSpace(mediaData) == "" {
+		return errors.New("message body or media is required")
 	}
 	msgID := fmt.Sprintf("dm-%d", time.Now().UnixNano())
-	msg := DirectMessage{MessageID: msgID, FromUserID: m.profile.UserID, ToUserID: toUserID, Body: strings.TrimSpace(body), CreatedAt: time.Now().UTC()}
+	msg := DirectMessage{
+		MessageID:  msgID,
+		FromUserID: m.profile.UserID,
+		ToUserID:   toUserID,
+		Body:       strings.TrimSpace(body),
+		MediaName:  strings.TrimSpace(mediaName),
+		MediaMIME:  strings.TrimSpace(mediaMIME),
+		MediaData:  strings.TrimSpace(mediaData),
+		CreatedAt:  time.Now().UTC(),
+	}
+	if len(msg.MediaData) > 5*1024*1024 {
+		return errors.New("media too large")
+	}
 	m.dms[toUserID] = append(m.dms[toUserID], msg)
 	payload := map[string]any{
 		"type":         "dm_message",
 		"message_id":   msgID,
 		"from_user_id": m.profile.UserID,
 		"body":         msg.Body,
+		"media_name":   msg.MediaName,
+		"media_mime":   msg.MediaMIME,
+		"media_data":   msg.MediaData,
 		"created_at":   msg.CreatedAt.Format(time.RFC3339Nano),
 	}
-	if err := m.publishSecureLocked(inboxTopic(toUserID), target.BoxPublicKey, payload); err != nil {
+	wire, err := m.buildSecureEnvelopeLocked(inboxTopic(toUserID), target.BoxPublicKey, payload)
+	if err != nil {
 		return err
+	}
+	if strings.TrimSpace(target.PeerID) == "" {
+		return errors.New("target peer is offline or peer_id unknown")
+	}
+	rep, derr := m.rpc.SendDirect(localrpcclient.SendDirectArgs{
+		AppID:   AppID,
+		PeerID:  target.PeerID,
+		Topic:   inboxTopic(toUserID),
+		Payload: wire,
+	})
+	if derr != nil {
+		return derr
+	}
+	if rep.Error != "" || !rep.Sent {
+		if rep.Error != "" {
+			return errors.New(rep.Error)
+		}
+		return errors.New("direct stream send failed")
 	}
 	return m.saveStateLocked()
 }
@@ -454,7 +494,7 @@ func (m *Manager) SendFriendRequestByInvite(token, message string) error {
 		}
 		m.usedInviteNonce[nonce] = time.Now().UTC()
 	}
-	m.knownUsers[userID] = KnownUser{UserID: userID, Username: asString(payload["username"]), SignPublicKey: asString(payload["sign_pub"]), BoxPublicKey: boxPub, LastSeenAt: time.Now().UTC()}
+	m.knownUsers[userID] = KnownUser{UserID: userID, PeerID: asString(payload["peer_id"]), Username: asString(payload["username"]), SignPublicKey: asString(payload["sign_pub"]), BoxPublicKey: boxPub, LastSeenAt: time.Now().UTC()}
 	_ = m.saveStateLocked()
 	m.mu.Unlock()
 	return m.SendFriendRequest(userID, message, "invite")
@@ -493,14 +533,17 @@ func parseInvite(token string) (map[string]any, error) {
 }
 
 func (m *Manager) publishPresence() {
+	m.refreshNodeStatus()
 	m.mu.RLock()
 	profile := m.profile
+	peerID := m.nodePeerID
 	m.mu.RUnlock()
 	if profile == nil || !profile.Settings.Discoverable {
 		return
 	}
 	body := map[string]any{
 		"user_id":         profile.UserID,
+		"peer_id":         peerID,
 		"username":        profile.Username,
 		"bio":             profile.Bio,
 		"avatar_data":     profile.AvatarData,
@@ -510,6 +553,16 @@ func (m *Manager) publishPresence() {
 		"ts":              time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	_ = m.publishPlain(topicPresence, body)
+}
+
+func (m *Manager) refreshNodeStatus() {
+	st, err := m.rpc.GetStatus()
+	if err != nil || st.Error != "" {
+		return
+	}
+	m.mu.Lock()
+	m.nodePeerID = strings.TrimSpace(st.PeerID)
+	m.mu.Unlock()
 }
 
 func (m *Manager) publishPlain(topic string, body map[string]any) error {
@@ -530,12 +583,20 @@ func (m *Manager) publishPlain(topic string, body map[string]any) error {
 }
 
 func (m *Manager) publishSecureLocked(topic, recipientBoxPubB64 string, body map[string]any) error {
+	wire, err := m.buildSecureEnvelopeLocked(topic, recipientBoxPubB64, body)
+	if err != nil {
+		return err
+	}
+	return m.publishSecureBytesLocked(topic, wire)
+}
+
+func (m *Manager) buildSecureEnvelopeLocked(topic, recipientBoxPubB64 string, body map[string]any) ([]byte, error) {
 	if m.identity == nil || m.profile == nil {
-		return errors.New("identity not ready")
+		return nil, errors.New("identity not ready")
 	}
 	peerPubRaw, err := base64.RawStdEncoding.DecodeString(recipientBoxPubB64)
 	if err != nil || len(peerPubRaw) != 32 {
-		return errors.New("invalid recipient key")
+		return nil, errors.New("invalid recipient key")
 	}
 	var peerPub [32]byte
 	copy(peerPub[:], peerPubRaw)
@@ -543,7 +604,7 @@ func (m *Manager) publishSecureLocked(topic, recipientBoxPubB64 string, body map
 	plain, _ := json.Marshal(body)
 	cipherText, nonce, err := encryptForPeer(m.identity.BoxPrivateKey, peerPub, plain)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	msgID := fmt.Sprintf("s-%d", time.Now().UnixNano())
 	secure := map[string]any{
@@ -562,6 +623,10 @@ func (m *Manager) publishSecureLocked(topic, recipientBoxPubB64 string, body map
 	sig := ed25519.Sign(m.identity.SignPrivate, canon)
 	secure["sig"] = base64.RawStdEncoding.EncodeToString(sig)
 	data, _ := json.Marshal(secure)
+	return data, nil
+}
+
+func (m *Manager) publishSecureBytesLocked(topic string, data []byte) error {
 	rep, err := m.rpc.Publish(localrpcclient.PublishArgs{AppID: AppID, Topic: topic, Payload: data})
 	if err != nil {
 		return err
@@ -890,6 +955,7 @@ func (m *Manager) handlePresence(body map[string]any) {
 	}
 	m.knownUsers[uid] = KnownUser{
 		UserID:        uid,
+		PeerID:        asString(body["peer_id"]),
 		Username:      asString(body["username"]),
 		Bio:           asString(body["bio"]),
 		AvatarData:    asString(body["avatar_data"]),
@@ -1010,7 +1076,16 @@ func (m *Manager) handleSecure(raw map[string]any) {
 			m.friends[fromUser] = Friend{UserID: fromUser, CreatedAt: time.Now().UTC()}
 		}
 	case "dm_message":
-		msg := DirectMessage{MessageID: asString(body["message_id"]), FromUserID: fromUser, ToUserID: myUser, Body: asString(body["body"]), CreatedAt: parseTS(asString(body["created_at"]))}
+		msg := DirectMessage{
+			MessageID:  asString(body["message_id"]),
+			FromUserID: fromUser,
+			ToUserID:   myUser,
+			Body:       asString(body["body"]),
+			MediaName:  asString(body["media_name"]),
+			MediaMIME:  asString(body["media_mime"]),
+			MediaData:  asString(body["media_data"]),
+			CreatedAt:  parseTS(asString(body["created_at"])),
+		}
 		if msg.MessageID == "" {
 			msg.MessageID = fmt.Sprintf("dm-in-%d", time.Now().UnixNano())
 		}
