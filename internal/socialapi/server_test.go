@@ -33,7 +33,7 @@ func TestSSEStreamWritesStateEvent(t *testing.T) {
 	}()
 
 	time.Sleep(100 * time.Millisecond)
-	_, err = m.Init("alice", "hi", "", "pw", social.Settings{Discoverable: true, AllowStrangerRequests: true, AllowGlobalFeed: true})
+	_, err = m.Init("alice", "hi", "", "pw", social.Settings{Discoverable: true, AllowStrangerRequests: true})
 	if err != nil {
 		t.Fatalf("init social: %v", err)
 	}

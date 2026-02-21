@@ -23,7 +23,6 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/social/v1/init", s.handleInit)
 	mux.HandleFunc("/api/social/v1/unlock", s.handleUnlock)
 	mux.HandleFunc("/api/social/v1/profile", s.handleProfile)
-	mux.HandleFunc("/api/social/v1/broadcast", s.handleBroadcast)
 	mux.HandleFunc("/api/social/v1/friends/request", s.handleRequest)
 	mux.HandleFunc("/api/social/v1/friends/respond", s.handleRespond)
 	mux.HandleFunc("/api/social/v1/friends/invite", s.handleInvite)
@@ -50,7 +49,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("event: ready\ndata: {}\n\n"))
+	writeSSEJSON(w, "ready", s.m.Snapshot())
 	flusher.Flush()
 
 	for {
@@ -61,7 +60,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			if _, err := w.Write([]byte(fmt.Sprintf("event: %s\ndata: {}\n\n", event))); err != nil {
+			if err := writeSSEJSON(w, event, s.m.Snapshot()); err != nil {
 				return
 			}
 			flusher.Flush()
@@ -153,25 +152,6 @@ func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"me": p})
-}
-
-func (s *Server) handleBroadcast(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req struct {
-		Text string `json:"text"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-	if err := s.m.Broadcast(req.Text); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
@@ -298,4 +278,13 @@ func writeNoContent(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 	w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeSSEJSON(w http.ResponseWriter, event string, payload any) error {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write([]byte(fmt.Sprintf("event: %s\ndata: %s\n\n", event, string(b))))
+	return err
 }

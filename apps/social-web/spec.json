@@ -7,7 +7,6 @@
     "POST /api/social/v1/init",
     "POST /api/social/v1/unlock",
     "POST /api/social/v1/profile",
-    "POST /api/social/v1/broadcast",
     "POST /api/social/v1/friends/request",
     "POST /api/social/v1/friends/respond",
     "POST /api/social/v1/friends/invite",

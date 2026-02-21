@@ -109,9 +109,9 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 
 func TestNormalizeSettingsKeepAllOff(t *testing.T) {
 	t.Parallel()
-	in := Settings{Discoverable: false, AllowStrangerRequests: false, AllowGlobalFeed: false}
+	in := Settings{Discoverable: false, AllowStrangerRequests: false}
 	out := normalizeSettings(in)
-	if out.Discoverable || out.AllowStrangerRequests || out.AllowGlobalFeed {
+	if out.Discoverable || out.AllowStrangerRequests {
 		t.Fatalf("settings should keep all disabled")
 	}
 }

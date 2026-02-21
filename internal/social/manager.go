@@ -27,7 +27,6 @@ import (
 const (
 	AppID                = "social"
 	topicPresence        = "app.social.v1.global.presence"
-	topicGlobalFeed      = "app.social.v1.global.feed"
 	defaultInviteTTL     = 24 * time.Hour
 	defaultPresenceEvery = 30 * time.Second
 )
@@ -35,7 +34,6 @@ const (
 type Settings struct {
 	Discoverable          bool `json:"discoverable"`
 	AllowStrangerRequests bool `json:"allow_stranger_requests"`
-	AllowGlobalFeed       bool `json:"allow_global_feed"`
 }
 
 type Profile struct {
@@ -87,13 +85,6 @@ type DirectMessage struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
-type Broadcast struct {
-	MessageID string    `json:"message_id"`
-	FromUser  string    `json:"from_user"`
-	Text      string    `json:"text"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
 type Identity struct {
 	UserID        string
 	SignPublicKey ed25519.PublicKey
@@ -120,7 +111,6 @@ type Manager struct {
 	requests        map[string]FriendRequest
 	friends         map[string]Friend
 	dms             map[string][]DirectMessage
-	broadcasts      []Broadcast
 	usedInviteNonce map[string]time.Time
 	cursors         map[string]int64
 	seenMessageIDs  map[string]struct{}
@@ -276,11 +266,6 @@ func (m *Manager) Snapshot() map[string]any {
 	}
 	sort.Slice(friends, func(i, j int) bool { return friends[i].CreatedAt.After(friends[j].CreatedAt) })
 
-	bcasts := append([]Broadcast(nil), m.broadcasts...)
-	if len(bcasts) > 60 {
-		bcasts = bcasts[len(bcasts)-60:]
-	}
-
 	me := (*Profile)(nil)
 	if m.profile != nil {
 		cp := *m.profile
@@ -288,12 +273,12 @@ func (m *Manager) Snapshot() map[string]any {
 	}
 
 	return map[string]any{
-		"initialized": m.profile != nil && m.identity != nil,
-		"me":          me,
-		"discovery":   known,
-		"requests":    reqs,
-		"friends":     friends,
-		"broadcasts":  bcasts,
+		"initialized":   m.profile != nil && m.identity != nil,
+		"me":            me,
+		"discovery":     known,
+		"requests":      reqs,
+		"friends":       friends,
+		"conversations": m.conversationsSnapshotLocked(),
 	}
 }
 
@@ -313,29 +298,6 @@ func (m *Manager) SubscribeEvents() (<-chan string, func()) {
 		}
 	}
 	return ch, cancel
-}
-
-func (m *Manager) Broadcast(text string) error {
-	m.mu.RLock()
-	profile := m.profile
-	m.mu.RUnlock()
-	if profile == nil {
-		return errors.New("not initialized")
-	}
-	if !profile.Settings.AllowGlobalFeed {
-		return errors.New("global feed disabled")
-	}
-	body := map[string]any{
-		"message_id": fmt.Sprintf("b-%d", time.Now().UnixNano()),
-		"from_user":  profile.UserID,
-		"username":   profile.Username,
-		"text":       strings.TrimSpace(text),
-		"created_at": time.Now().UTC().Format(time.RFC3339Nano),
-	}
-	if strings.TrimSpace(text) == "" {
-		return errors.New("text required")
-	}
-	return m.publishPlain(topicGlobalFeed, body)
 }
 
 func (m *Manager) SendFriendRequest(targetUserID, message, method string) error {
@@ -865,7 +827,7 @@ func (m *Manager) ensureSubscribed() error {
 			from = 0
 		}
 	}
-	topics := []string{topicPresence, topicGlobalFeed, inboxTopic(m.profile.UserID)}
+	topics := []string{topicPresence, inboxTopic(m.profile.UserID)}
 	rep, err := m.rpc.Subscribe(localrpcclient.SubscribeArgs{AppID: AppID, Topics: topics, FromOffset: from})
 	if err != nil {
 		return err
@@ -911,10 +873,6 @@ func (m *Manager) processRecord(rec localrpcclient.MessageRecord) {
 			m.handlePresence(body)
 			return
 		}
-		if rec.Topic == topicGlobalFeed {
-			m.handleFeed(body)
-			return
-		}
 	case "secure":
 		m.handleSecure(generic)
 	}
@@ -938,34 +896,6 @@ func (m *Manager) handlePresence(body map[string]any) {
 		SignPublicKey: asString(body["sign_public_key"]),
 		BoxPublicKey:  asString(body["box_public_key"]),
 		LastSeenAt:    time.Now().UTC(),
-	}
-	_ = m.saveStateLocked()
-}
-
-func (m *Manager) handleFeed(body map[string]any) {
-	uid := asString(body["from_user"])
-	if uid == "" {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.profile != nil && uid == m.profile.UserID {
-		return
-	}
-	ts, _ := time.Parse(time.RFC3339Nano, asString(body["created_at"]))
-	if ts.IsZero() {
-		ts = time.Now().UTC()
-	}
-	id := asString(body["message_id"])
-	if id != "" {
-		if _, ok := m.seenMessageIDs[id]; ok {
-			return
-		}
-		m.seenMessageIDs[id] = struct{}{}
-	}
-	m.broadcasts = append(m.broadcasts, Broadcast{MessageID: id, FromUser: uid, Text: asString(body["text"]), CreatedAt: ts})
-	if len(m.broadcasts) > 400 {
-		m.broadcasts = m.broadcasts[len(m.broadcasts)-400:]
 	}
 	_ = m.saveStateLocked()
 }
@@ -1136,7 +1066,6 @@ type persistedState struct {
 	Requests        map[string]FriendRequest   `json:"requests"`
 	Friends         map[string]Friend          `json:"friends"`
 	DMs             map[string][]DirectMessage `json:"dms"`
-	Broadcasts      []Broadcast                `json:"broadcasts"`
 	UsedInviteNonce map[string]time.Time       `json:"used_invite_nonce"`
 	Cursors         map[string]int64           `json:"cursors"`
 }
@@ -1165,7 +1094,6 @@ func (m *Manager) loadState() error {
 	if ps.DMs != nil {
 		m.dms = ps.DMs
 	}
-	m.broadcasts = ps.Broadcasts
 	if ps.UsedInviteNonce != nil {
 		m.usedInviteNonce = ps.UsedInviteNonce
 	}
@@ -1182,7 +1110,6 @@ func (m *Manager) saveStateLocked() error {
 		Requests:        m.requests,
 		Friends:         m.friends,
 		DMs:             m.dms,
-		Broadcasts:      m.broadcasts,
 		UsedInviteNonce: m.usedInviteNonce,
 		Cursors:         m.cursors,
 	}
@@ -1195,6 +1122,18 @@ func (m *Manager) saveStateLocked() error {
 	}
 	m.emitEventLocked("state")
 	return nil
+}
+
+func (m *Manager) conversationsSnapshotLocked() map[string][]DirectMessage {
+	out := make(map[string][]DirectMessage, len(m.dms))
+	for peer, msgs := range m.dms {
+		cp := append([]DirectMessage(nil), msgs...)
+		if len(cp) > 200 {
+			cp = cp[len(cp)-200:]
+		}
+		out[peer] = cp
+	}
+	return out
 }
 
 func (m *Manager) emitEventLocked(event string) {
