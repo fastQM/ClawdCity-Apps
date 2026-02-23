@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tetris Local Agent Test</title>
+  <style>
+    :root { --bg1:#fff6d5; --bg2:#d9f7ff; --ink:#25324a; --line:#c9daf4; --accent:#ff8e61; --blue:#5ca8ff; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Baloo 2", "Noto Sans SC", sans-serif;
+      color: var(--ink);
+      background: radial-gradient(circle at 12% 8%, #ffffff88 0, #ffffff00 35%), linear-gradient(140deg, var(--bg1), var(--bg2));
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .app { width: min(1080px, 100%); display: grid; grid-template-columns: 350px 1fr; gap: 12px; }
+    .panel { background: #fff; border: 3px solid var(--line); border-radius: 18px; padding: 12px; }
+    .title { margin: 4px 0 8px; font-size: 28px; color: #284575; }
+    .sub { font-size: 12px; opacity: .8; margin-bottom: 10px; }
+    .field { margin-bottom: 8px; }
+    .field label { display: block; font-size: 12px; opacity: .8; margin-bottom: 4px; }
+    .field input { width: 100%; border: 2px solid #d4e4fb; border-radius: 10px; padding: 8px; font: inherit; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    button {
+      border: 0; border-radius: 10px; padding: 9px 10px; font: inherit; cursor: pointer;
+      color: #fff; font-weight: 700; background: linear-gradient(180deg, #ff9d75, var(--accent));
+    }
+    button.blue { background: linear-gradient(180deg, #79bbff, var(--blue)); }
+    button.warn { background: linear-gradient(180deg, #ff7c97, #ff5f84); }
+    .status { margin-top: 8px; border: 2px solid #cbead7; border-radius: 10px; padding: 7px; background: #eefaf2; font-size: 12px; }
+    .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 8px; }
+    .stat { border: 2px dashed #dbe7fb; border-radius: 10px; padding: 8px; background: #f8fbff; }
+    .stat b { display: block; font-size: 11px; opacity: .7; }
+    .stat span { font-size: 22px; color: #355eab; font-weight: 700; }
+    .hint { margin-top: 8px; border: 2px dashed #d7e6ff; border-radius: 10px; padding: 8px; font-size: 12px; background: #f5f9ff; line-height: 1.5; }
+    .right { display: grid; gap: 10px; }
+    #board { width: 100%; max-width: 420px; background: #132141; border: 5px solid #88c0ff; border-radius: 14px; }
+    .board-wrap { display: flex; justify-content: center; align-items: center; min-height: 620px; }
+    pre { margin: 0; background: #0f1b33; color: #dcecff; border-radius: 10px; padding: 10px; min-height: 120px; font-size: 11px; overflow: auto; }
+    .actions { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+    @media (max-width: 960px) {
+      .app { grid-template-columns: 1fr; }
+      .board-wrap { min-height: auto; }
+      .actions { grid-template-columns: repeat(3, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <section class="panel">
+      <h1 class="title">Tetris Local Agent Test</h1>
+      <div class="sub">Single-machine harness, no peer matching required.</div>
+
+      <div class="field">
+        <label>Player ID</label>
+        <input id="playerID" value="local_player" />
+      </div>
+      <div class="row">
+        <button class="blue" id="registerBtn">Register</button>
+        <button class="blue" id="readyBtn">Ready</button>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <button class="warn" id="controlBtn">Switch To Agent</button>
+        <button id="restartBtn">Restart</button>
+      </div>
+      <div class="status" id="status">Idle</div>
+
+      <div class="stats">
+        <div class="stat"><b>Score</b><span id="score">0</span></div>
+        <div class="stat"><b>Lines</b><span id="lines">0</span></div>
+        <div class="stat"><b>Level</b><span id="level">1</span></div>
+        <div class="stat"><b>Mode</b><span id="mode" style="font-size:16px;">human</span></div>
+      </div>
+
+      <div class="hint">
+        Keyboard: ← → move, ↑ rotate, ↓ soft drop, Space hard drop, R restart.<br/>
+        API base: <code id="apiBaseTxt"></code>
+      </div>
+    </section>
+
+    <section class="right">
+      <div class="panel board-wrap">
+        <canvas id="board" width="300" height="600"></canvas>
+      </div>
+      <div class="panel">
+        <div class="actions">
+          <button id="leftBtn" class="blue">Left</button>
+          <button id="rightBtn" class="blue">Right</button>
+          <button id="rotateBtn" class="blue">Rotate</button>
+          <button id="downBtn" class="blue">Down</button>
+          <button id="dropBtn" class="blue">Drop</button>
+        </div>
+      </div>
+      <div class="panel">
+        <b>Room State (raw)</b>
+        <pre id="stateDump">{}</pre>
+      </div>
+      <div class="panel">
+        <b>Event Log</b>
+        <pre id="log"></pre>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const COLS = 10, ROWS = 20, BLOCK = 30;
+    const COLORS = { I:'#68deff', O:'#ffd45f', T:'#bf8cff', S:'#66df96', Z:'#ff7f9a', J:'#6e9dff', L:'#ffb36b' };
+    const SHAPES = {
+      I:[[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]], O:[[1,1],[1,1]], T:[[0,1,0],[1,1,1],[0,0,0]],
+      S:[[0,1,1],[1,1,0],[0,0,0]], Z:[[1,1,0],[0,1,1],[0,0,0]], J:[[1,0,0],[1,1,1],[0,0,0]], L:[[0,0,1],[1,1,1],[0,0,0]]
+    };
+    const KEYS = Object.keys(SHAPES);
+
+    const query = new URLSearchParams(window.location.search);
+    const apiBase = (query.get('apiBase') || window.location.origin).replace(/\/+$/, '');
+    document.getElementById('apiBaseTxt').textContent = apiBase;
+
+    const boardCanvas = document.getElementById('board');
+    const ctx = boardCanvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+    const logEl = document.getElementById('log');
+    const stateDumpEl = document.getElementById('stateDump');
+    const playerInput = document.getElementById('playerID');
+    const modeEl = document.getElementById('mode');
+
+    let board = [];
+    let current = null;
+    let next = null;
+    let running = false;
+    let gameOver = false;
+    let dropInterval = 1200;
+    let dropCounter = 0;
+    let lastTime = 0;
+    let score = 0, lines = 0, level = 1;
+    let roomID = 'local_room';
+    let controlMode = 'human';
+    let stream = null;
+    let stateSyncTimer = null;
+    let statePullTimer = null;
+
+    function setStatus(s, bad=false) {
+      statusEl.textContent = s;
+      statusEl.style.background = bad ? '#fff0f3' : '#eefaf2';
+      statusEl.style.borderColor = bad ? '#ffc6d2' : '#cbead7';
+    }
+    function log(s) {
+      const line = `[${new Date().toLocaleTimeString()}] ${s}`;
+      logEl.textContent = (logEl.textContent ? logEl.textContent + '\n' : '') + line;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    async function apiGet(path) {
+      const res = await fetch(`${apiBase}${path}`);
+      return await res.json();
+    }
+    async function apiPost(path, body) {
+      const res = await fetch(`${apiBase}${path}`, {
+        method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      return data;
+    }
+
+    function createBoard() { board = Array.from({length: ROWS}, () => Array(COLS).fill('')); }
+    function clone(m){ return m.map(r => r.slice()); }
+    function randPiece(){
+      const t = KEYS[Math.floor(Math.random() * KEYS.length)];
+      return { type:t, matrix:clone(SHAPES[t]), x:Math.floor((COLS - SHAPES[t][0].length)/2), y:-1 };
+    }
+    function collide(p) {
+      for (let y=0;y<p.matrix.length;y++) for (let x=0;x<p.matrix[y].length;x++) {
+        if (!p.matrix[y][x]) continue;
+        const nx = p.x + x, ny = p.y + y;
+        if (nx < 0 || nx >= COLS || ny >= ROWS) return true;
+        if (ny >= 0 && board[ny][nx]) return true;
+      }
+      return false;
+    }
+    function mergePiece() {
+      for (let y=0;y<current.matrix.length;y++) for (let x=0;x<current.matrix[y].length;x++) {
+        if (!current.matrix[y][x]) continue;
+        const by = current.y + y, bx = current.x + x;
+        if (by >= 0) board[by][bx] = current.type;
+      }
+    }
+    function clearLines() {
+      let c = 0;
+      outer: for (let y=ROWS-1;y>=0;y--) {
+        for (let x=0;x<COLS;x++) if (!board[y][x]) continue outer;
+        board.splice(y,1); board.unshift(Array(COLS).fill('')); c++; y++;
+      }
+      if (c>0) {
+        lines += c;
+        score += ([0,100,300,500,800][c] || c * 200) * level;
+        level = Math.floor(lines / 10) + 1;
+        dropInterval = Math.max(500, 1200 - (level - 1) * 50);
+      }
+      refreshStats();
+    }
+    function spawn() {
+      current = next || randPiece();
+      next = randPiece();
+      if (collide(current)) { gameOver = true; running = false; setStatus('Game over', true); }
+    }
+    function rotateMatrix(m) {
+      const n = m.length, out = Array.from({length:n},()=>Array(n).fill(0));
+      for (let y=0;y<n;y++) for (let x=0;x<n;x++) out[x][n-1-y] = m[y][x];
+      return out;
+    }
+    function tryRotate() {
+      if (!running || gameOver) return;
+      const orig = current.matrix;
+      current.matrix = rotateMatrix(current.matrix);
+      for (const dx of [0,-1,1,-2,2]) {
+        current.x += dx;
+        if (!collide(current)) { draw(); return; }
+        current.x -= dx;
+      }
+      current.matrix = orig;
+    }
+    function move(dx, dy) {
+      if (!running || gameOver) return;
+      current.x += dx; current.y += dy;
+      if (collide(current)) {
+        current.x -= dx; current.y -= dy;
+        if (dy === 1) { mergePiece(); clearLines(); spawn(); }
+      }
+      draw();
+    }
+    function hardDrop() {
+      if (!running || gameOver) return;
+      while (!collide(current)) current.y++;
+      current.y--; mergePiece(); clearLines(); spawn(); draw();
+    }
+    function drawCell(x,y,color){
+      const px=x*BLOCK, py=y*BLOCK;
+      ctx.fillStyle = color; ctx.fillRect(px+1,py+1,BLOCK-2,BLOCK-2);
+      ctx.fillStyle = '#ffffff66'; ctx.fillRect(px+4,py+4,BLOCK-10,5);
+      ctx.strokeStyle = '#00000033'; ctx.lineWidth = 2; ctx.strokeRect(px+1,py+1,BLOCK-2,BLOCK-2);
+    }
+    function draw() {
+      ctx.clearRect(0,0,boardCanvas.width,boardCanvas.height);
+      for (let y=0;y<ROWS;y++) for (let x=0;x<COLS;x++) {
+        ctx.fillStyle='#16305d'; ctx.fillRect(x*BLOCK,y*BLOCK,BLOCK,BLOCK);
+        ctx.strokeStyle='#ffffff14'; ctx.strokeRect(x*BLOCK,y*BLOCK,BLOCK,BLOCK);
+        if (board[y][x]) drawCell(x,y,COLORS[board[y][x]]);
+      }
+      if (!current) return;
+      for (let y=0;y<current.matrix.length;y++) for (let x=0;x<current.matrix[y].length;x++) {
+        if (!current.matrix[y][x]) continue;
+        const bx = current.x + x, by = current.y + y;
+        if (by >= 0) drawCell(bx, by, COLORS[current.type]);
+      }
+    }
+    function refreshStats() {
+      document.getElementById('score').textContent = score;
+      document.getElementById('lines').textContent = lines;
+      document.getElementById('level').textContent = level;
+      modeEl.textContent = controlMode;
+    }
+    function snapshotBoard() {
+      const b = board.map(r => r.slice());
+      if (current) {
+        for (let y=0;y<current.matrix.length;y++) for (let x=0;x<current.matrix[y].length;x++) {
+          if (!current.matrix[y][x]) continue;
+          const by=current.y+y,bx=current.x+x;
+          if (by>=0 && by<ROWS && bx>=0 && bx<COLS) b[by][bx]=current.type;
+        }
+      }
+      return b.map(r => r.map(v => v || '.').join(''));
+    }
+    function applyRemoteAction(action) {
+      if (action === 'move_left') move(-1,0);
+      if (action === 'move_right') move(1,0);
+      if (action === 'soft_drop') move(0,1);
+      if (action === 'rotate') { tryRotate(); draw(); }
+      if (action === 'hard_drop') hardDrop();
+    }
+    function sendInput(action, payload={}, source='human') {
+      const pid = playerInput.value.trim();
+      if (!pid) return;
+      return apiPost(`/api/local-tetris/room/${roomID}/input`, {player_id:pid, source, action, payload})
+        .catch(err => log(`input error -> ${err.message}`));
+    }
+    function connectStream() {
+      if (stream) stream.close();
+      stream = new EventSource(`${apiBase}/api/local-tetris/room/${roomID}/stream`);
+      stream.onopen = () => log('stream connected');
+      stream.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          if (data.type === 'control_switch_applied' && data.meta && data.meta.player_id === playerInput.value.trim()) {
+            controlMode = data.meta.to_mode || controlMode;
+            document.getElementById('controlBtn').textContent = controlMode === 'agent' ? 'Return To Human' : 'Switch To Agent';
+            refreshStats();
+          }
+          if (data.type === 'room_input' && data.input && data.input.player_id === playerInput.value.trim() && data.input.source === 'agent') {
+            applyRemoteAction(data.input.action);
+            sendInput('state_sync', { board:snapshotBoard(), score, lines, level, game_over:gameOver }, 'agent');
+          }
+          log(`event -> ${ev.data}`);
+        } catch (_) {
+          log(`event(raw) -> ${ev.data}`);
+        }
+      };
+      stream.onerror = () => { log('stream disconnected'); stream.close(); stream = null; };
+    }
+    async function pullState() {
+      try {
+        const rs = await apiGet(`/api/local-tetris/room/${roomID}/state`);
+        stateDumpEl.textContent = JSON.stringify(rs, null, 2);
+      } catch (e) {
+        stateDumpEl.textContent = JSON.stringify({error:String(e)}, null, 2);
+      }
+    }
+
+    async function register() {
+      const pid = playerInput.value.trim();
+      if (!pid) return;
+      const r = await apiPost('/api/local-tetris/register', {player_id: pid, app_id:'tetris-local', version:'0.1.0'});
+      log(`register -> ${JSON.stringify(r)}`);
+      setStatus('registered');
+    }
+    async function ready() {
+      const pid = playerInput.value.trim();
+      if (!pid) return;
+      const r = await apiPost('/api/local-tetris/ready', {player_id:pid, ping_ms:0});
+      log(`ready -> ${JSON.stringify(r)}`);
+      setStatus('running');
+      running = true; gameOver = false;
+      connectStream();
+      startLoops();
+    }
+    async function toggleControl() {
+      const pid = playerInput.value.trim();
+      const toMode = controlMode === 'agent' ? 'human' : 'agent';
+      const r = await apiPost(`/api/local-tetris/room/${roomID}/control`, {player_id:pid, to_mode:toMode, agent_id:toMode==='agent'?'openclaw-agent':''});
+      log(`control -> ${JSON.stringify(r)}`);
+      controlMode = r.player.control_mode;
+      document.getElementById('controlBtn').textContent = controlMode === 'agent' ? 'Return To Human' : 'Switch To Agent';
+      refreshStats();
+    }
+    function restart() {
+      createBoard(); score = 0; lines = 0; level = 1; dropInterval = 1200; dropCounter = 0;
+      gameOver = false; running = true; next = randPiece(); spawn(); draw(); refreshStats();
+      setStatus('running');
+    }
+    function tick(t=0) {
+      if (!running || gameOver) return;
+      const dt = t - lastTime;
+      lastTime = t;
+      dropCounter += dt;
+      if (dropCounter > dropInterval) { move(0,1); dropCounter = 0; }
+      requestAnimationFrame(tick);
+    }
+    function startLoops() {
+      if (stateSyncTimer) clearInterval(stateSyncTimer);
+      stateSyncTimer = setInterval(() => {
+        const source = controlMode === 'agent' ? 'agent' : 'human';
+        sendInput('state_sync', { board:snapshotBoard(), score, lines, level, game_over:gameOver }, source);
+      }, 250);
+      if (statePullTimer) clearInterval(statePullTimer);
+      statePullTimer = setInterval(pullState, 500);
+      lastTime = performance.now();
+      requestAnimationFrame(tick);
+    }
+
+    document.getElementById('registerBtn').addEventListener('click', register);
+    document.getElementById('readyBtn').addEventListener('click', ready);
+    document.getElementById('controlBtn').addEventListener('click', toggleControl);
+    document.getElementById('restartBtn').addEventListener('click', restart);
+
+    document.getElementById('leftBtn').addEventListener('click', () => { if (controlMode !== 'human') return; move(-1,0); sendInput('move_left'); });
+    document.getElementById('rightBtn').addEventListener('click', () => { if (controlMode !== 'human') return; move(1,0); sendInput('move_right'); });
+    document.getElementById('rotateBtn').addEventListener('click', () => { if (controlMode !== 'human') return; tryRotate(); sendInput('rotate'); });
+    document.getElementById('downBtn').addEventListener('click', () => { if (controlMode !== 'human') return; move(0,1); sendInput('soft_drop'); });
+    document.getElementById('dropBtn').addEventListener('click', () => { if (controlMode !== 'human') return; hardDrop(); sendInput('hard_drop'); });
+
+    window.addEventListener('keydown', (e) => {
+      if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"," ","r","R"].includes(e.key)) e.preventDefault();
+      if (e.key === 'r' || e.key === 'R') { restart(); return; }
+      if (controlMode !== 'human') return;
+      if (e.key === 'ArrowLeft') { move(-1,0); sendInput('move_left'); }
+      if (e.key === 'ArrowRight') { move(1,0); sendInput('move_right'); }
+      if (e.key === 'ArrowUp') { tryRotate(); sendInput('rotate'); }
+      if (e.key === 'ArrowDown') { move(0,1); sendInput('soft_drop'); }
+      if (e.key === ' ') { hardDrop(); sendInput('hard_drop'); }
+    }, {passive:false});
+
+    createBoard();
+    restart();
+    setStatus('click Register then Ready');
+  </script>
+</body>
+</html>

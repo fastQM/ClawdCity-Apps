@@ -1,0 +1,9 @@
+{
+  "app_id": "tetris-local",
+  "name": "Tetris Local Test",
+  "version": "0.1.0",
+  "kind": "game",
+  "description": "Single-machine Tetris harness for agent takeover debugging",
+  "entry": "/apps/tetris-local/web/index.html",
+  "tags": ["tetris", "local", "agent", "debug"]
+}
