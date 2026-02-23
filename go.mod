@@ -1,4 +1,4 @@
-module ClawdCity-Apps
+module Assembler-Apps
 
 go 1.25.7
 

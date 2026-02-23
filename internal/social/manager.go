@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"ClawdCity-Apps/internal/localrpcclient"
+	"Assembler-Apps/internal/localrpcclient"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/curve25519"
 )

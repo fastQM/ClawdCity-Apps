@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"ClawdCity-Apps/internal/core/network"
+	"Assembler-Apps/internal/core/network"
 )
 
 func TestMatchAndControlSwitch(t *testing.T) {

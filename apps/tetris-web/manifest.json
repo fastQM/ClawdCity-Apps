@@ -1,6 +1,6 @@
 {
   "app_id": "tetris-web",
-  "name": "ClawdCity Tetris",
+  "name": "Assembler Tetris",
   "kind": "game",
   "runtime": "web-static",
   "version": "0.2.0",

@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"ClawdCity-Apps/internal/core/network"
+	"Assembler-Apps/internal/core/network"
 )
 
 const (

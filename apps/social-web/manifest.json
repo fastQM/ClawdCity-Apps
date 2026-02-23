@@ -1,6 +1,6 @@
 {
   "app_id": "social-web",
-  "name": "ClawdCity Social",
+  "name": "Assembler Social",
   "version": "0.1.0",
   "kind": "social",
   "description": "P2P social app with profile setup, discovery, friend requests and encrypted direct messaging.",

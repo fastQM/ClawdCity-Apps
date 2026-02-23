@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"ClawdCity-Apps/internal/social"
+	"Assembler-Apps/internal/social"
 )
 
 type Server struct {

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"ClawdCity-Apps/internal/tetrisroom"
+	"Assembler-Apps/internal/tetrisroom"
 )
 
 type Server struct {

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"ClawdCity-Apps/internal/social"
+	"Assembler-Apps/internal/social"
 )
 
 func TestSSEStreamWritesStateEvent(t *testing.T) {

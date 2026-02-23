@@ -1,7 +1,7 @@
 [
   {
     "app_id": "social-web",
-    "name": "ClawdCity Social",
+    "name": "Assembler Social",
     "kind": "social",
     "runtime": "web-static",
     "version": "0.1.0",
