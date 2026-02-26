@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/crypto"
 	"golang.org/x/crypto/curve25519"
 )
 
@@ -107,12 +110,18 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 	}
 }
 
-func TestNormalizeSettingsKeepAllOff(t *testing.T) {
+func TestNormalizeSettingsDefaults(t *testing.T) {
 	t.Parallel()
-	in := Settings{Discoverable: false, AllowStrangerRequests: false}
+	in := Settings{Discoverable: false, AllowStrangerRequests: false, IsAdmin: true, ContractAddress: " 0xabc "}
 	out := normalizeSettings(in)
-	if out.Discoverable || out.AllowStrangerRequests {
-		t.Fatalf("settings should keep all disabled")
+	if !out.Discoverable || !out.AllowStrangerRequests {
+		t.Fatalf("discovery defaults should stay enabled")
+	}
+	if !out.IsAdmin {
+		t.Fatalf("is_admin should be preserved")
+	}
+	if out.ContractAddress != "0xabc" {
+		t.Fatalf("contract address should be trimmed")
 	}
 }
 
@@ -128,5 +137,66 @@ func TestIdentityHasValidCurve25519PublicKey(t *testing.T) {
 	}
 	if string(pub) != string(id.BoxPublicKey[:]) {
 		t.Fatalf("box public key does not match private key")
+	}
+}
+
+func TestVerifyWalletChallenge(t *testing.T) {
+	t.Parallel()
+
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	addr := crypto.PubkeyToAddress(key.PublicKey).Hex()
+	hash := accounts.TextHash([]byte(walletChallenge))
+	sig, err := crypto.Sign(hash, key)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	sigHex := hexutil.Encode(sig)
+
+	if !verifyWalletChallenge(addr, sigHex) {
+		t.Fatalf("expected signature verification to pass")
+	}
+
+	tampered := append([]byte(nil), sig...)
+	tampered[5] ^= 0x01
+	if verifyWalletChallenge(addr, hexutil.Encode(tampered)) {
+		t.Fatalf("expected tampered signature to fail")
+	}
+}
+
+func TestWalletLoginAutoInitAndRelogin(t *testing.T) {
+	t.Parallel()
+
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("generate wallet key: %v", err)
+	}
+	addr := crypto.PubkeyToAddress(key.PublicKey).Hex()
+
+	dir := t.TempDir()
+	m, err := NewManager(Config{DataDir: dir, RPCSocketPath: "/tmp/does-not-exist.sock"})
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	p, err := m.LoginWithWallet(addr, Settings{Discoverable: true, AllowStrangerRequests: true})
+	if err != nil {
+		t.Fatalf("wallet login init: %v", err)
+	}
+	if !strings.EqualFold(p.Username, addr) {
+		t.Fatalf("username should equal wallet address")
+	}
+
+	m2, err := NewManager(Config{DataDir: dir, RPCSocketPath: "/tmp/does-not-exist.sock"})
+	if err != nil {
+		t.Fatalf("new manager #2: %v", err)
+	}
+	p2, err := m2.LoginWithWallet(addr, Settings{})
+	if err != nil {
+		t.Fatalf("wallet relogin: %v", err)
+	}
+	if p2.UserID == "" {
+		t.Fatalf("expected persistent user id")
 	}
 }

@@ -274,33 +274,21 @@
   <section id="setupView" class="center-shell hidden">
     <div class="center-card">
       <div class="center-head">
-        <h1>Initialize Social Profile</h1>
-        <p>First-time setup only.</p>
+        <h1>Wallet Login</h1>
+        <p>Connect MetaMask or Rabby to continue.</p>
       </div>
-      <div class="grid-two">
-        <div>
-          <label>Username</label>
-          <input id="initUsername" placeholder="Your display name" />
-        </div>
-        <div>
-          <label>Passphrase</label>
-          <input id="initPassphrase" type="password" placeholder="Create unlock password" />
-        </div>
+      <div>
+        <label>Wallet Address</label>
+        <input id="initUsername" placeholder="0x..." readonly />
       </div>
-      <div style="margin-top:10px;">
-        <label>Bio</label>
-        <textarea id="initBio" placeholder="A short intro"></textarea>
-      </div>
-      <div style="margin-top:10px;">
-        <label>Avatar (data URL, optional)</label>
-        <textarea id="initAvatar" placeholder="data:image/png;base64,..."></textarea>
+      <div class="actions" style="margin-top:14px;">
+        <button class="secondary" onclick="connectWallet()">Connect MetaMask / Rabby</button>
       </div>
       <div class="row" style="margin-top:10px;">
-        <label><input type="checkbox" id="initDiscoverable" checked /> Discoverable</label>
-        <label><input type="checkbox" id="initAllowStranger" checked /> Allow stranger requests</label>
+        <label><input type="checkbox" id="initIsAdmin" /> Administrator</label>
       </div>
       <div class="actions">
-        <button class="primary" onclick="submitInit()">Initialize</button>
+        <button class="primary" onclick="submitWalletLogin()">Login</button>
         <button class="secondary" onclick="backHome()">Back</button>
       </div>
       <div id="setupMsg" class="muted" style="margin-top:10px;"></div>
@@ -372,12 +360,12 @@
 
       <section id="configPanel" class="config-wrap hidden">
         <div class="card">
-          <div class="card-title">Profile & Settings</div>
+          <div class="card-title">Profile</div>
           <div style="padding:12px;display:grid;gap:10px;">
             <div class="config-grid">
               <div>
-                <label>Username</label>
-                <input id="cfgUsername" placeholder="Display name" />
+                <label>Username (wallet address)</label>
+                <input id="cfgUsername" placeholder="0x..." readonly />
               </div>
               <div>
                 <label>User ID</label>
@@ -393,12 +381,50 @@
               <textarea id="cfgAvatar"></textarea>
             </div>
             <div class="row">
-              <label><input type="checkbox" id="cfgDiscoverable" /> Can be discovered</label>
-              <label><input type="checkbox" id="cfgAllowStranger" /> Allow stranger requests</label>
-            </div>
-            <div class="row">
               <button class="primary" onclick="saveConfig()">Save Config</button>
             </div>
+          </div>
+        </div>
+
+        <div class="card" id="adminPanel" style="display:none;">
+          <div class="card-title">Admin Contract Console</div>
+          <div style="padding:12px;display:grid;gap:8px;">
+            <div class="muted">Publish contract: deploy `contracts/AssemblerRegistry.sol` with your wallet tooling, then paste contract address below.</div>
+            <button class="secondary" onclick="publishContract()">Publish Contract (One-click)</button>
+            <input id="cfgContractAddress" placeholder="0xContractAddress" />
+            <button class="secondary" onclick="saveContractAddress()">Save Contract Address</button>
+            <div class="row">
+              <button class="primary" onclick="adminLoadContacts()">View Contacts (Wallets)</button>
+              <button class="secondary" onclick="adminLoadRequests()">View Contact Requests (Owner Review)</button>
+            </div>
+            <div>
+              <label>Request ID</label>
+              <input id="adminRequestID" placeholder="e.g. 1" />
+            </div>
+            <div class="row">
+              <button class="primary" onclick="adminApproveRequest()">Approve Request</button>
+              <button class="danger" onclick="adminRejectRequest()">Reject Request</button>
+            </div>
+            <div>
+              <label>Bootnode ID (bytes32 hex)</label>
+              <input id="adminBootnodeID" placeholder="0x..." />
+            </div>
+            <div>
+              <label>Bootnode Multiaddr</label>
+              <input id="adminBootnodeAddr" placeholder="/ip4/x.x.x.x/tcp/40001/p2p/..." />
+            </div>
+            <button class="primary" onclick="adminUpsertBootnode()">Upsert Bootnode</button>
+            <textarea id="adminContractOutput" class="mono" placeholder="Admin query result"></textarea>
+          </div>
+        </div>
+
+        <div class="card" id="userPanel" style="display:none;">
+          <div class="card-title">User Contract Access</div>
+          <div style="padding:12px;display:grid;gap:8px;">
+            <input id="userContractAddress" placeholder="Input contract address" />
+            <button class="secondary" onclick="saveContractAddress()">Save Contract Address</button>
+            <input id="userRequestNote" placeholder="Apply note (optional)" />
+            <button class="primary" onclick="submitContactApplication()">Apply Add Contact</button>
           </div>
         </div>
 
@@ -422,6 +448,7 @@
     </main>
   </section>
 
+  <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.5/dist/ethers.umd.min.js"></script>
   <script>
     let latestState = null;
     let selectedFriend = '';
@@ -429,6 +456,15 @@
     let pendingMedia = null;
     let enteredSocial = false;
     let mainTab = 'chat';
+    let connectedWalletAddress = '';
+    const REGISTRY_ABI = [
+      'function upsertBootnode(bytes32 id, string multiaddr)',
+      'function submitContactRequest(string note) returns (uint256)',
+      'function approveRequest(uint256 requestId)',
+      'function rejectRequest(uint256 requestId)',
+      'function listContacts(uint256 offset, uint256 limit) view returns (address[])',
+      'function listRequests(uint256 offset, uint256 limit) view returns (tuple(uint256 id,address applicant,string note,uint8 status,uint64 createdAt,uint64 reviewedAt,address reviewer)[])'
+    ];
 
     function esc(s) { return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
@@ -461,11 +497,9 @@
     }
 
     function getSocialStage(state) {
-      const hasProfile = Boolean((state && state.has_profile) || (state && state.me));
-      const unlocked = Boolean(state && (state.unlocked || state.initialized));
-      if (!hasProfile) return 'setup';
-      if (!unlocked) return 'unlock';
-      return 'main';
+      const ready = Boolean(state && (state.unlocked || state.initialized));
+      if (ready) return 'main';
+      return 'setup';
     }
 
     function enterSocial() {
@@ -494,13 +528,18 @@
 
     function renderMain() {
       const me = latestState.me || {};
+      connectedWalletAddress = String(me.username || connectedWalletAddress || '').toLowerCase();
       document.getElementById('meLine').textContent = `${me.username || 'unknown'} · ${me.user_id || '-'}`;
       document.getElementById('cfgUsername').value = me.username || '';
       document.getElementById('cfgUserID').value = me.user_id || '';
       document.getElementById('cfgBio').value = me.bio || '';
       document.getElementById('cfgAvatar').value = me.avatar_data || '';
-      document.getElementById('cfgDiscoverable').checked = Boolean(me.settings && me.settings.discoverable);
-      document.getElementById('cfgAllowStranger').checked = Boolean(me.settings && me.settings.allow_stranger_requests);
+      const contractAddr = (me.settings && me.settings.contract_address) ? me.settings.contract_address : '';
+      document.getElementById('cfgContractAddress').value = contractAddr;
+      document.getElementById('userContractAddress').value = contractAddr;
+      const isAdmin = Boolean(me.settings && me.settings.is_admin);
+      document.getElementById('adminPanel').style.display = isAdmin ? '' : 'none';
+      document.getElementById('userPanel').style.display = isAdmin ? 'none' : '';
 
       renderFriends();
       renderDiscovery();
@@ -521,7 +560,7 @@
 
       if (mainTab === 'config') {
         document.getElementById('chatTitle').textContent = 'Config';
-        document.getElementById('chatSubtitle').textContent = 'Manage profile and discovery/privacy settings.';
+        document.getElementById('chatSubtitle').textContent = 'Manage profile and contract settings.';
         chatPanel.classList.add('hidden');
         composer.classList.add('hidden');
         configPanel.classList.remove('hidden');
@@ -568,8 +607,204 @@
     }
 
     async function requestUser(userID) {
-      const res = await postJSON('/api/social/v1/friends/request', {target_user_id: userID, message: 'hi'});
+      const signature = await signHello();
+      if (!signature) return;
+      const res = await postJSON('/api/social/v1/friends/request', {
+        target_user_id: userID,
+        message: 'hi',
+        wallet_address: connectedWalletAddress,
+        hello_sig: signature
+      });
       if (res.error) alert(res.error);
+    }
+
+    function ensureWalletProvider() {
+      if (!window.ethereum || typeof window.ethereum.request !== 'function') {
+        alert('No EVM wallet found. Please install MetaMask or Rabby.');
+        return false;
+      }
+      return true;
+    }
+
+    async function connectWallet() {
+      if (!ensureWalletProvider()) return '';
+      try {
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        const addr = (accounts && accounts[0]) ? String(accounts[0]).toLowerCase() : '';
+        if (!addr) {
+          alert('Wallet account not available.');
+          return '';
+        }
+        connectedWalletAddress = addr;
+        const initInput = document.getElementById('initUsername');
+        if (initInput) initInput.value = addr;
+        const cfgInput = document.getElementById('cfgUsername');
+        if (cfgInput) cfgInput.value = addr;
+        return addr;
+      } catch (e) {
+        alert(e && e.message ? e.message : 'Wallet connection failed');
+        return '';
+      }
+    }
+
+    async function signHello() {
+      let addr = connectedWalletAddress || ((latestState && latestState.me && latestState.me.username) ? String(latestState.me.username).toLowerCase() : '');
+      if (!addr) {
+        addr = await connectWallet();
+      }
+      if (!addr || !ensureWalletProvider()) return '';
+      const msgHex = '0x48656c6c6f'; // "Hello"
+      try {
+        return await window.ethereum.request({ method: 'personal_sign', params: [msgHex, addr] });
+      } catch (e) {
+        alert(e && e.message ? e.message : 'Signature rejected');
+        return '';
+      }
+    }
+
+    function activeContractAddress() {
+      const me = (latestState && latestState.me) ? latestState.me : {};
+      const fromState = me.settings && me.settings.contract_address ? String(me.settings.contract_address).trim() : '';
+      const fromCfg = (document.getElementById('cfgContractAddress') ? document.getElementById('cfgContractAddress').value : '') || '';
+      const fromUser = (document.getElementById('userContractAddress') ? document.getElementById('userContractAddress').value : '') || '';
+      return (fromState || fromCfg || fromUser || '').trim();
+    }
+
+    async function getRegistryContract(write) {
+      const addr = activeContractAddress();
+      if (!addr) {
+        alert('Please input and save contract address first.');
+        return null;
+      }
+      if (!window.ethers || !window.ethereum) {
+        alert('Wallet provider or ethers runtime is missing.');
+        return null;
+      }
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = write ? await provider.getSigner() : null;
+      return new ethers.Contract(addr, REGISTRY_ABI, write ? signer : provider);
+    }
+
+    async function adminUpsertBootnode() {
+      const c = await getRegistryContract(true);
+      if (!c) return;
+      try {
+        const id = (document.getElementById('adminBootnodeID').value || '').trim();
+        const addr = (document.getElementById('adminBootnodeAddr').value || '').trim();
+        const tx = await c.upsertBootnode(id, addr);
+        document.getElementById('adminContractOutput').value = `Submitted tx: ${tx.hash}`;
+      } catch (e) {
+        alert(e && e.message ? e.message : 'upsert bootnode failed');
+      }
+    }
+
+    async function publishContract() {
+      if (!window.ethers || !window.ethereum) {
+        alert('Wallet provider or ethers runtime is missing.');
+        return;
+      }
+      try {
+        const artifactRes = await fetch('/apps/social-web/web/contracts/AssemblerRegistry.json', { headers: { 'Accept': 'application/json' } });
+        if (!artifactRes.ok) {
+          alert('Contract artifact not found. Please ensure AssemblerRegistry.json is available.');
+          return;
+        }
+        const artifact = await artifactRes.json();
+        if (!artifact || !artifact.abi || !artifact.bytecode) {
+          alert('Invalid contract artifact.');
+          return;
+        }
+
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const signer = await provider.getSigner();
+        const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, signer);
+        const contract = await factory.deploy();
+        const tx = contract.deploymentTransaction();
+        document.getElementById('adminContractOutput').value = `Deploy submitted: ${tx ? tx.hash : ''}`;
+        await contract.waitForDeployment();
+        const deployed = await contract.getAddress();
+        document.getElementById('cfgContractAddress').value = deployed;
+        document.getElementById('userContractAddress').value = deployed;
+        await saveContractAddress();
+        document.getElementById('adminContractOutput').value = `Deploy success: ${deployed}`;
+      } catch (e) {
+        alert(e && e.message ? e.message : 'publish contract failed');
+      }
+    }
+
+    async function adminLoadContacts() {
+      const c = await getRegistryContract(false);
+      if (!c) return;
+      try {
+        const rows = await c.listContacts(0, 200);
+        document.getElementById('adminContractOutput').value = rows.map(v => String(v)).join('\n') || '(empty)';
+      } catch (e) {
+        alert(e && e.message ? e.message : 'load contacts failed');
+      }
+    }
+
+    async function adminLoadRequests() {
+      const c = await getRegistryContract(false);
+      if (!c) return;
+      try {
+        const rows = await c.listRequests(0, 200);
+        const out = rows.map(r => `id=${r.id} applicant=${r.applicant} status=${r.status} note=${r.note || ''}`);
+        document.getElementById('adminContractOutput').value = out.join('\n') || '(empty)';
+      } catch (e) {
+        alert(e && e.message ? e.message : 'load requests failed');
+      }
+    }
+
+    function adminRequestIDValue() {
+      const raw = (document.getElementById('adminRequestID').value || '').trim();
+      if (!raw) {
+        alert('Request ID is required.');
+        return null;
+      }
+      try {
+        return BigInt(raw);
+      } catch (_) {
+        alert('Invalid Request ID.');
+        return null;
+      }
+    }
+
+    async function adminApproveRequest() {
+      const c = await getRegistryContract(true);
+      if (!c) return;
+      const requestID = adminRequestIDValue();
+      if (requestID === null) return;
+      try {
+        const tx = await c.approveRequest(requestID);
+        document.getElementById('adminContractOutput').value = `Approve submitted: ${tx.hash}`;
+      } catch (e) {
+        alert(e && e.message ? e.message : 'approve request failed');
+      }
+    }
+
+    async function adminRejectRequest() {
+      const c = await getRegistryContract(true);
+      if (!c) return;
+      const requestID = adminRequestIDValue();
+      if (requestID === null) return;
+      try {
+        const tx = await c.rejectRequest(requestID);
+        document.getElementById('adminContractOutput').value = `Reject submitted: ${tx.hash}`;
+      } catch (e) {
+        alert(e && e.message ? e.message : 'reject request failed');
+      }
+    }
+
+    async function submitContactApplication() {
+      const c = await getRegistryContract(true);
+      if (!c) return;
+      try {
+        const note = (document.getElementById('userRequestNote').value || '').trim();
+        const tx = await c.submitContactRequest(note);
+        alert(`Application submitted: ${tx.hash}`);
+      } catch (e) {
+        alert(e && e.message ? e.message : 'apply contact failed');
+      }
     }
 
     function renderRequests() {
@@ -640,35 +875,28 @@
       }
     }
 
-    async function submitInit() {
-      setSetupMessage('Initializing...', false);
-      const res = await postJSON('/api/social/v1/init', {
-        username: document.getElementById('initUsername').value,
-        bio: document.getElementById('initBio').value,
-        avatar_data: document.getElementById('initAvatar').value,
-        passphrase: document.getElementById('initPassphrase').value,
+    async function submitWalletLogin() {
+      if (!connectedWalletAddress) {
+        const addr = await connectWallet();
+        if (!addr) return;
+      }
+      setSetupMessage('Logging in...', false);
+      const res = await postJSON('/api/social/v1/wallet-login', {
+        wallet_address: connectedWalletAddress,
         settings: {
-          discoverable: document.getElementById('initDiscoverable').checked,
-          allow_stranger_requests: document.getElementById('initAllowStranger').checked
+          is_admin: document.getElementById('initIsAdmin').checked
         }
       });
       if (res.error) {
         setSetupMessage(res.error, true);
         return;
       }
-      setSetupMessage('Initialized.', false);
+      setSetupMessage('Logged in.', false);
       await loadInitialState();
     }
 
     async function submitUnlock() {
-      setUnlockMessage('Unlocking...', false);
-      const res = await postJSON('/api/social/v1/unlock', {passphrase: document.getElementById('unlockPassphrase').value});
-      if (res.error) {
-        setUnlockMessage(res.error, true);
-        return;
-      }
-      setUnlockMessage('Unlocked.', false);
-      await loadInitialState();
+      await submitWalletLogin();
     }
 
     async function saveConfig() {
@@ -677,11 +905,16 @@
         bio: document.getElementById('cfgBio').value,
         avatar_data: document.getElementById('cfgAvatar').value,
         settings: {
-          discoverable: document.getElementById('cfgDiscoverable').checked,
-          allow_stranger_requests: document.getElementById('cfgAllowStranger').checked
+          is_admin: Boolean(latestState && latestState.me && latestState.me.settings && latestState.me.settings.is_admin),
+          contract_address: (document.getElementById('cfgContractAddress').value || document.getElementById('userContractAddress').value || '').trim()
         }
       });
       if (res.error) alert(res.error);
+    }
+
+    async function saveContractAddress() {
+      await saveConfig();
+      await loadInitialState();
     }
 
     async function createInvite() {
@@ -691,9 +924,13 @@
     }
 
     async function requestByInvite() {
+      const signature = await signHello();
+      if (!signature) return;
       const res = await postJSON('/api/social/v1/friends/request-by-invite', {
         token: document.getElementById('inviteInput').value,
-        message: document.getElementById('inviteMessage').value
+        message: document.getElementById('inviteMessage').value,
+        wallet_address: connectedWalletAddress,
+        hello_sig: signature
       });
       if (res.error) alert(res.error);
     }

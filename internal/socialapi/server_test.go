@@ -33,7 +33,7 @@ func TestSSEStreamWritesStateEvent(t *testing.T) {
 	}()
 
 	time.Sleep(100 * time.Millisecond)
-	_, err = m.Init("alice", "hi", "", "pw", social.Settings{Discoverable: true, AllowStrangerRequests: true})
+	_, err = m.Init("0x1111111111111111111111111111111111111111", "hi", "", "pw", social.Settings{Discoverable: true, AllowStrangerRequests: true})
 	if err != nil {
 		t.Fatalf("init social: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestHandleInitAndState(t *testing.T) {
 		t.Fatalf("state code: %d", mux.Code)
 	}
 
-	initReq := httptest.NewRequest("POST", "/api/social/v1/init", bytes.NewBufferString(`{"username":"bob","passphrase":"pw","settings":{"discoverable":true,"allow_stranger_requests":true}}`))
+	initReq := httptest.NewRequest("POST", "/api/social/v1/init", bytes.NewBufferString(`{"username":"0x1111111111111111111111111111111111111111","passphrase":"pw","settings":{"discoverable":true,"allow_stranger_requests":true}}`))
 	initReq.Header.Set("Content-Type", "application/json")
 	initRec := httptest.NewRecorder()
 	s.handleInit(initRec, initReq)

@@ -20,6 +20,10 @@ import (
 	"time"
 
 	"Assembler-Apps/internal/localrpcclient"
+	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/crypto"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/curve25519"
 )
@@ -29,11 +33,14 @@ const (
 	topicPresence        = "app.social.v1.global.presence"
 	defaultInviteTTL     = 24 * time.Hour
 	defaultPresenceEvery = 30 * time.Second
+	walletChallenge      = "Hello"
 )
 
 type Settings struct {
-	Discoverable          bool `json:"discoverable"`
-	AllowStrangerRequests bool `json:"allow_stranger_requests"`
+	Discoverable          bool   `json:"discoverable"`
+	AllowStrangerRequests bool   `json:"allow_stranger_requests"`
+	IsAdmin               bool   `json:"is_admin"`
+	ContractAddress       string `json:"contract_address,omitempty"`
 }
 
 type Profile struct {
@@ -61,15 +68,18 @@ type KnownUser struct {
 }
 
 type FriendRequest struct {
-	RequestID  string    `json:"request_id"`
-	FromUserID string    `json:"from_user_id"`
-	ToUserID   string    `json:"to_user_id"`
-	FromName   string    `json:"from_name,omitempty"`
-	Message    string    `json:"message,omitempty"`
-	Method     string    `json:"method,omitempty"`
-	Status     string    `json:"status"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	RequestID         string    `json:"request_id"`
+	FromUserID        string    `json:"from_user_id"`
+	ToUserID          string    `json:"to_user_id"`
+	FromName          string    `json:"from_name,omitempty"`
+	WalletAddress     string    `json:"wallet_address,omitempty"`
+	HelloSignature    string    `json:"hello_sig,omitempty"`
+	SignatureVerified bool      `json:"signature_verified"`
+	Message           string    `json:"message,omitempty"`
+	Method            string    `json:"method,omitempty"`
+	Status            string    `json:"status"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type Friend struct {
@@ -146,6 +156,9 @@ func NewManager(cfg Config) (*Manager, error) {
 		return nil, err
 	}
 	_ = m.loadState()
+	m.mu.Lock()
+	_ = m.loadIdentityPlainLocked()
+	m.mu.Unlock()
 	m.refreshNodeStatus()
 	if cfg.Passphrase != "" {
 		_ = m.unlock(cfg.Passphrase)
@@ -183,6 +196,9 @@ func (m *Manager) Init(username, bio, avatarData, passphrase string, settings Se
 	if strings.TrimSpace(username) == "" {
 		return nil, errors.New("username required")
 	}
+	if !common.IsHexAddress(strings.TrimSpace(username)) {
+		return nil, errors.New("username must be an EVM wallet address")
+	}
 	if len(avatarData) > 350000 {
 		return nil, errors.New("avatar too large")
 	}
@@ -197,7 +213,7 @@ func (m *Manager) Init(username, bio, avatarData, passphrase string, settings Se
 	now := time.Now().UTC()
 	p := &Profile{
 		UserID:        id.UserID,
-		Username:      strings.TrimSpace(username),
+		Username:      strings.ToLower(strings.TrimSpace(username)),
 		Bio:           strings.TrimSpace(bio),
 		AvatarData:    avatarData,
 		SignPublicKey: base64.RawStdEncoding.EncodeToString(id.SignPublicKey),
@@ -228,7 +244,10 @@ func (m *Manager) UpdateProfile(username, bio, avatarData string, settings Setti
 		return nil, errors.New("not initialized")
 	}
 	if strings.TrimSpace(username) != "" {
-		m.profile.Username = strings.TrimSpace(username)
+		if !common.IsHexAddress(strings.TrimSpace(username)) {
+			return nil, errors.New("username must be an EVM wallet address")
+		}
+		m.profile.Username = strings.ToLower(strings.TrimSpace(username))
 	}
 	m.profile.Bio = strings.TrimSpace(bio)
 	if avatarData != "" {
@@ -248,6 +267,10 @@ func (m *Manager) UpdateProfile(username, bio, avatarData string, settings Setti
 }
 
 func normalizeSettings(s Settings) Settings {
+	// Keep social discovery usable by default in wallet-login flow.
+	s.Discoverable = true
+	s.AllowStrangerRequests = true
+	s.ContractAddress = strings.TrimSpace(s.ContractAddress)
 	return s
 }
 
@@ -308,27 +331,53 @@ func (m *Manager) SubscribeEvents() (<-chan string, func()) {
 	return ch, cancel
 }
 
-func (m *Manager) SendFriendRequest(targetUserID, message, method string) error {
+func (m *Manager) SendFriendRequest(targetUserID, message, method, walletAddr, helloSig string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.profile == nil || m.identity == nil {
 		return errors.New("not initialized")
+	}
+	walletAddr = strings.TrimSpace(walletAddr)
+	helloSig = strings.TrimSpace(helloSig)
+	if !common.IsHexAddress(walletAddr) {
+		return errors.New("wallet address required")
+	}
+	if !strings.EqualFold(walletAddr, m.profile.Username) {
+		return errors.New("wallet address must match profile username")
+	}
+	if !verifyWalletChallenge(walletAddr, helloSig) {
+		return errors.New("invalid wallet signature")
 	}
 	target, ok := m.knownUsers[targetUserID]
 	if !ok {
 		return errors.New("target user not found in discovery")
 	}
 	reqID := fmt.Sprintf("fr-%d", time.Now().UnixNano())
-	req := FriendRequest{RequestID: reqID, FromUserID: m.profile.UserID, ToUserID: targetUserID, FromName: m.profile.Username, Message: message, Method: method, Status: "pending_out", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+	req := FriendRequest{
+		RequestID:         reqID,
+		FromUserID:        m.profile.UserID,
+		ToUserID:          targetUserID,
+		FromName:          m.profile.Username,
+		WalletAddress:     strings.ToLower(walletAddr),
+		HelloSignature:    helloSig,
+		SignatureVerified: true,
+		Message:           message,
+		Method:            method,
+		Status:            "pending_out",
+		CreatedAt:         time.Now().UTC(),
+		UpdatedAt:         time.Now().UTC(),
+	}
 	m.requests[reqID] = req
 	payload := map[string]any{
-		"type":         "friend_request",
-		"request_id":   reqID,
-		"from_user_id": m.profile.UserID,
-		"from_name":    m.profile.Username,
-		"message":      message,
-		"method":       method,
-		"created_at":   req.CreatedAt.Format(time.RFC3339Nano),
+		"type":           "friend_request",
+		"request_id":     reqID,
+		"from_user_id":   m.profile.UserID,
+		"from_name":      m.profile.Username,
+		"wallet_address": strings.ToLower(walletAddr),
+		"hello_sig":      helloSig,
+		"message":        message,
+		"method":         method,
+		"created_at":     req.CreatedAt.Format(time.RFC3339Nano),
 	}
 	if err := m.publishSecureLocked(inboxTopic(targetUserID), target.BoxPublicKey, payload); err != nil {
 		return err
@@ -473,7 +522,7 @@ func (m *Manager) CreateInviteLink() (string, error) {
 	return token, nil
 }
 
-func (m *Manager) SendFriendRequestByInvite(token, message string) error {
+func (m *Manager) SendFriendRequestByInvite(token, message, walletAddr, helloSig string) error {
 	payload, err := parseInvite(token)
 	if err != nil {
 		return err
@@ -499,7 +548,7 @@ func (m *Manager) SendFriendRequestByInvite(token, message string) error {
 	m.knownUsers[userID] = KnownUser{UserID: userID, PeerID: asString(payload["peer_id"]), Username: asString(payload["username"]), SignPublicKey: asString(payload["sign_pub"]), BoxPublicKey: boxPub, LastSeenAt: time.Now().UTC()}
 	_ = m.saveStateLocked()
 	m.mu.Unlock()
-	return m.SendFriendRequest(userID, message, "invite")
+	return m.SendFriendRequest(userID, message, "invite", walletAddr, helloSig)
 }
 
 func parseInvite(token string) (map[string]any, error) {
@@ -713,6 +762,131 @@ type identityPlain struct {
 	UserID      string `json:"user_id"`
 	SignPrivB64 string `json:"sign_priv_b64"`
 	BoxPrivB64  string `json:"box_priv_b64"`
+}
+
+func (m *Manager) identityPlainPath() string {
+	return filepath.Join(m.cfg.DataDir, "identity.json")
+}
+
+func (m *Manager) walletNormalized(addr string) (string, error) {
+	addr = strings.TrimSpace(strings.ToLower(addr))
+	if !common.IsHexAddress(addr) {
+		return "", errors.New("wallet address required")
+	}
+	return addr, nil
+}
+
+func (m *Manager) LoginWithWallet(walletAddr string, settings Settings) (*Profile, error) {
+	walletAddr, err := m.walletNormalized(walletAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.identity == nil {
+		if err := m.loadIdentityPlainLocked(); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+	}
+
+	if m.profile == nil {
+		id, err := generateIdentity()
+		if err != nil {
+			return nil, err
+		}
+		now := time.Now().UTC()
+		m.profile = &Profile{
+			UserID:        id.UserID,
+			Username:      walletAddr,
+			Bio:           "",
+			AvatarData:    "",
+			SignPublicKey: base64.RawStdEncoding.EncodeToString(id.SignPublicKey),
+			BoxPublicKey:  base64.RawStdEncoding.EncodeToString(id.BoxPublicKey[:]),
+			Settings:      normalizeSettings(settings),
+			InitializedAt: now,
+			LastUpdatedAt: now,
+		}
+		m.identity = id
+		if err := m.saveIdentityPlainLocked(); err != nil {
+			return nil, err
+		}
+		if err := m.saveStateLocked(); err != nil {
+			return nil, err
+		}
+		m.startLoopLocked()
+		go m.publishPresence()
+		cp := *m.profile
+		return &cp, nil
+	}
+
+	if !strings.EqualFold(m.profile.Username, walletAddr) {
+		return nil, errors.New("wallet address does not match existing profile")
+	}
+	if m.identity == nil {
+		return nil, errors.New("local identity missing")
+	}
+	incoming := normalizeSettings(settings)
+	if incoming.ContractAddress == "" {
+		incoming.ContractAddress = m.profile.Settings.ContractAddress
+	}
+	m.profile.Settings = incoming
+	m.profile.LastUpdatedAt = time.Now().UTC()
+	_ = m.saveStateLocked()
+	if m.cancel == nil {
+		m.startLoopLocked()
+	}
+	go m.publishPresence()
+	cp := *m.profile
+	return &cp, nil
+}
+
+func (m *Manager) saveIdentityPlainLocked() error {
+	if m.identity == nil {
+		return errors.New("identity missing")
+	}
+	plain := identityPlain{
+		UserID:      m.identity.UserID,
+		SignPrivB64: base64.RawStdEncoding.EncodeToString(m.identity.SignPrivate),
+		BoxPrivB64:  base64.RawStdEncoding.EncodeToString(m.identity.BoxPrivateKey[:]),
+	}
+	b, _ := json.MarshalIndent(plain, "", "  ")
+	return os.WriteFile(m.identityPlainPath(), b, 0o600)
+}
+
+func (m *Manager) loadIdentityPlainLocked() error {
+	if m.identity != nil {
+		return nil
+	}
+	b, err := os.ReadFile(m.identityPlainPath())
+	if err != nil {
+		return err
+	}
+	var plain identityPlain
+	if err := json.Unmarshal(b, &plain); err != nil {
+		return err
+	}
+	signPrivRaw, err := base64.RawStdEncoding.DecodeString(plain.SignPrivB64)
+	if err != nil {
+		return err
+	}
+	boxPrivRaw, err := base64.RawStdEncoding.DecodeString(plain.BoxPrivB64)
+	if err != nil || len(boxPrivRaw) != 32 {
+		return errors.New("invalid box key")
+	}
+	signPriv := ed25519.PrivateKey(signPrivRaw)
+	signPub := signPriv.Public().(ed25519.PublicKey)
+	boxPubRaw, err := curve25519.X25519(boxPrivRaw, curve25519.Basepoint)
+	if err != nil {
+		return err
+	}
+	var boxPriv [32]byte
+	copy(boxPriv[:], boxPrivRaw)
+	var boxPub [32]byte
+	copy(boxPub[:], boxPubRaw)
+	m.identity = &Identity{UserID: plain.UserID, SignPublicKey: signPub, SignPrivate: signPriv, BoxPublicKey: boxPub, BoxPrivateKey: boxPriv}
+	return nil
 }
 
 func (m *Manager) saveIdentity(passphrase string) error {
@@ -1056,6 +1230,18 @@ func (m *Manager) handleSecure(raw map[string]any) {
 				return
 			}
 		}
+		walletAddr := strings.ToLower(strings.TrimSpace(asString(body["wallet_address"])))
+		helloSig := strings.TrimSpace(asString(body["hello_sig"]))
+		if !verifyWalletChallenge(walletAddr, helloSig) {
+			return
+		}
+		fromName := strings.TrimSpace(asString(body["from_name"]))
+		if fromName == "" {
+			fromName = walletAddr
+		}
+		if !strings.EqualFold(fromName, walletAddr) {
+			return
+		}
 		reqID := asString(body["request_id"])
 		if reqID == "" {
 			return
@@ -1064,7 +1250,20 @@ func (m *Manager) handleSecure(raw map[string]any) {
 			return
 		}
 		created := parseTS(asString(body["created_at"]))
-		m.requests[reqID] = FriendRequest{RequestID: reqID, FromUserID: fromUser, ToUserID: myUser, FromName: asString(body["from_name"]), Message: asString(body["message"]), Method: asString(body["method"]), Status: "pending_in", CreatedAt: created, UpdatedAt: created}
+		m.requests[reqID] = FriendRequest{
+			RequestID:         reqID,
+			FromUserID:        fromUser,
+			ToUserID:          myUser,
+			FromName:          walletAddr,
+			WalletAddress:     walletAddr,
+			HelloSignature:    helloSig,
+			SignatureVerified: true,
+			Message:           asString(body["message"]),
+			Method:            asString(body["method"]),
+			Status:            "pending_in",
+			CreatedAt:         created,
+			UpdatedAt:         created,
+		}
 	case "friend_response":
 		reqID := asString(body["request_id"])
 		status := asString(body["status"])
@@ -1135,6 +1334,31 @@ func parseTS(raw string) time.Time {
 		return time.Now().UTC()
 	}
 	return t
+}
+
+func verifyWalletChallenge(walletAddr, sigHex string) bool {
+	walletAddr = strings.TrimSpace(walletAddr)
+	sigHex = strings.TrimSpace(sigHex)
+	if !common.IsHexAddress(walletAddr) || sigHex == "" {
+		return false
+	}
+	sig, err := hexutil.Decode(sigHex)
+	if err != nil || len(sig) != 65 {
+		return false
+	}
+	if sig[64] >= 27 {
+		sig[64] -= 27
+	}
+	if sig[64] > 1 {
+		return false
+	}
+	hash := accounts.TextHash([]byte(walletChallenge))
+	pub, err := crypto.SigToPub(hash, sig)
+	if err != nil {
+		return false
+	}
+	recovered := crypto.PubkeyToAddress(*pub).Hex()
+	return strings.EqualFold(recovered, walletAddr)
 }
 
 type persistedState struct {
